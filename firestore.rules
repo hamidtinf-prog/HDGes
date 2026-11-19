@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// Règles de sécurité Firestore pour HDGes
+// Principe : seuls les utilisateurs connectés (via Firebase Authentication)
+// peuvent lire ou écrire des données. Personne d'autre sur Internet, même
+// avec le lien du site, ne peut accéder aux données sans être connecté.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Toutes les collections de l'application (bons, fournisseurs, clients,
+    // produits, stations, banque, users...) sont regroupées sous un même
+    // "espace de travail" (workspace) pour que tout le monde dans l'équipe
+    // voie les mêmes données.
+    match /workspaces/{workspaceId}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Bloque tout le reste par défaut (sécurité par défaut = fermé)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
