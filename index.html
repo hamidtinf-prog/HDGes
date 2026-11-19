@@ -1874,7 +1874,7 @@ let editingFactId = null;
 
 // Date du jour en heure LOCALE (toISOString donnait la veille entre 00h et 01h au Maroc)
 function todayISO(){ const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-const fmt = n => (Number(n)||0).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmt = n => { const v = Number(n)||0; return (Math.abs(v)<0.005 ? 0 : v).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}); };   // évite « -0,00 » (arrondis)
 // Affiche une date stockée en ISO (AAAA-MM-JJ) au format JJ/MM/AAAA (jour en premier)
 const fmtDate = d => {
   if(!d) return '—';
@@ -1965,11 +1965,13 @@ function simpleHash(str){
 function usersDirectoryDoc(){
   return db.collection('workspaces').doc('main').collection('data').doc('users-list');
 }
+// Retourne true si la liste a bien été lue (false = erreur réseau / droits : NE PAS la réécrire)
 async function loadUsers(){
   try{
     const doc = await usersDirectoryDoc().get();
     users = doc.exists ? JSON.parse(doc.data().value) : [];
-  }catch(e){ users = []; }
+    return true;
+  }catch(e){ users = []; return false; }
 }
 async function saveUsersList(){
   try{ await usersDirectoryDoc().set({ value: JSON.stringify(users), updatedAt: Date.now() }); return true; }
@@ -5849,7 +5851,7 @@ function buildTiersLedger(tiersType, tiersNom, dateFrom, dateTo){
 
   let running = opening, totalDebit = 0, totalCredit = 0;
   periodEntries.forEach(e=>{
-    running += (e.debit||0) - (e.credit||0);
+    running = Math.round((running + (e.debit||0) - (e.credit||0))*100)/100;   // centimes : évite les résidus d'arrondi (0,1+0,2…)
     e.solde = running;
     totalDebit += e.debit||0;
     totalCredit += e.credit||0;
@@ -8658,10 +8660,18 @@ document.getElementById('forgotPasswordLink').addEventListener('click', async e=
 
 async function ensureOwnProfile(fbUser){
   // Charge la liste des profils (rôle/permissions) et retrouve celui qui correspond à l'email connecté
-  await loadUsers();
+  const usersLoaded = await loadUsers();
+  if(!usersLoaded){
+    // Lecture impossible : surtout ne pas recréer/écraser la liste des comptes
+    throw new Error('Impossible de lire la liste des utilisateurs (connexion internet ?). Réessaie dans un instant.');
+  }
   let profile = users.find(u=>u.email && u.email.toLowerCase()===fbUser.email.toLowerCase());
+  if(!profile && users.length>0){
+    // Compte inconnu (accès retiré, ou compte créé hors de l'application) : aucun accès
+    return null;
+  }
   if(!profile){
-    // Premier utilisateur (compte admin) : le profil n'existe pas encore, on le crée
+    // Tout premier utilisateur (liste vide) : il devient le compte admin
     profile = {
       id: fbUser.uid,
       ref: computeNextRef(users,'U'),
@@ -8730,6 +8740,11 @@ fbAuth.onAuthStateChanged(async (fbUser)=>{
       // Firestore, pour éviter une fausse alerte de sauvegarde juste après connexion.
       await fbUser.getIdToken(true);
       currentUser = await ensureOwnProfile(fbUser); // détermine aussi le workspace (main/démo)
+      if(!currentUser){
+        await fbAuth.signOut();
+        document.getElementById('loginError').textContent = '⛔ Ce compte n\'a pas (ou plus) accès à l\'application. Demande à l\'administrateur.';
+        return;
+      }
 
       // Vérifie l'expiration des comptes démo (validité 24h depuis leur création)
       if(currentUser.workspace==='demo' && currentUser.demoExpiresAt && Date.now() > currentUser.demoExpiresAt){
