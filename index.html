@@ -1984,16 +1984,38 @@ function usersDirectoryDoc(){
   return db.collection('workspaces').doc('main').collection('data').doc('users-list');
 }
 // Retourne true si la liste a bien été lue (false = erreur réseau / droits : NE PAS la réécrire)
-async function loadUsers(){
+// Ancienne liste (un seul document JSON). Conservée en copie pour les anciennes versions de
+// l'application ; la référence est maintenant la collection « members » (voir plus bas).
+async function loadLegacyUsers(){
   try{
     const doc = await usersDirectoryDoc().get();
-    users = doc.exists ? JSON.parse(doc.data().value) : [];
-    return true;
-  }catch(e){ users = []; return false; }
+    return doc.exists ? JSON.parse(doc.data().value) : [];
+  }catch(e){ return null; }   // null = lecture refusée ou impossible
 }
-async function saveUsersList(){
+async function saveUsersList(){   // copie de compatibilité (jamais bloquante)
   try{ await usersDirectoryDoc().set({ value: JSON.stringify(users), updatedAt: Date.now() }); return true; }
   catch(e){ return false; }
+}
+
+// --- Comptes : une fiche par utilisateur dans « members/{email} » ---
+// C'est CETTE fiche que les règles Firestore vérifient (rôle, espace main/démo, expiration démo) :
+// un compte sans fiche ne peut ni lire ni écrire aucune donnée, même en contournant l'application.
+function memberDoc(email){ return db.collection('members').doc(String(email).trim().toLowerCase()); }
+async function saveMember(u){
+  try{ await memberDoc(u.email).set(JSON.parse(JSON.stringify(u))); return true; }
+  catch(e){ console.error('saveMember', e); return false; }
+}
+async function deleteMember(u){
+  try{ await memberDoc(u.email).delete(); return true; }
+  catch(e){ console.error('deleteMember', e); return false; }
+}
+// Liste complète des comptes (réservée à l'admin par les règles)
+async function loadUsers(){
+  try{
+    const snap = await db.collection('members').get();
+    users = snap.docs.map(d=>d.data());
+    return true;
+  }catch(e){ return false; }
 }
 
 // --- Banque ---
@@ -8352,9 +8374,10 @@ document.getElementById('usrSaveBtn').addEventListener('click', async ()=>{
     demoExpiresAt: isDemo ? (Date.now() + 24*60*60*1000) : null,
     permissions: { tabs: perms }
   };
-  users.push(record);
-  const ok = await saveUsersList();
+  const ok = await saveMember(record);
   if(!ok){ showToast('⚠️ Compte de connexion créé mais échec de l\'enregistrement du profil — réessaie'); return; }
+  users.push(record);
+  saveUsersList();
   renderUsersTable();
   showToast(isDemo ? '✓ Compte démo créé' : '✓ Utilisateur créé');
   clearUsrForm();
@@ -8376,9 +8399,10 @@ document.getElementById('usrModifierBtn').addEventListener('click', async ()=>{
   }
 
   const updated = { ...users[idx], role, permissions: { tabs: perms } };
-  users[idx] = updated;
-  const ok = await saveUsersList();
+  const ok = await saveMember(updated);
   if(!ok){ showToast('⚠️ Échec de l\'enregistrement — vérifie ta connexion internet'); return; }
+  users[idx] = updated;
+  saveUsersList();
   if(currentUser && currentUser.id===updated.id) currentUser = updated;
   populateUsrSelect(editingUserId);
   renderUsersTable();
@@ -8398,8 +8422,9 @@ document.getElementById('usrDeleteBtn').addEventListener('click', async ()=>{
   const otherAdmins = users.filter(x=>x.id!==u.id && x.role==='admin');
   if(u.role==='admin' && otherAdmins.length===0){ showToast('⚠️ Impossible : il doit rester au moins un compte Admin'); return; }
   if(!confirm(`Retirer l'accès du compte "${u.email}" ?`)) return;
+  if(!(await deleteMember(u))){ showToast('⚠️ Échec — vérifie ta connexion internet'); return; }
   users = users.filter(x=>x.id!==u.id);
-  await saveUsersList();
+  saveUsersList();
   renderUsersTable();
   clearUsrForm();
   showToast('Accès retiré');
@@ -8843,51 +8868,51 @@ document.getElementById('forgotPasswordLink').addEventListener('click', async e=
 });
 
 async function ensureOwnProfile(fbUser){
-  // Charge la liste des profils (rôle/permissions) et retrouve celui qui correspond à l'email connecté
-  const usersLoaded = await loadUsers();
-  if(!usersLoaded){
-    // Lecture impossible : surtout ne pas recréer/écraser la liste des comptes
-    throw new Error('Impossible de lire la liste des utilisateurs (connexion internet ?). Réessaie dans un instant.');
-  }
-  let profile = users.find(u=>u.email && u.email.toLowerCase()===fbUser.email.toLowerCase());
-  if(!profile && users.length>0){
-    // Compte inconnu (accès retiré, ou compte créé hors de l'application) : aucun accès
-    return null;
-  }
+  const email = (fbUser.email||'').toLowerCase();
+  if(!email) return null;
+  let snap;
+  try{ snap = await memberDoc(email).get(); }
+  catch(e){ throw new Error('Impossible de vérifier ton accès (connexion internet ?). Réessaie dans un instant.'); }
+  let profile = snap.exists ? snap.data() : null;
+
   if(!profile){
-    // Tout premier utilisateur (liste vide) : il devient le compte admin
-    profile = {
-      id: fbUser.uid,
-      ref: computeNextRef(users,'U'),
-      email: fbUser.email,
-      role: 'admin',
-      workspace: 'main',
-      permissions: { tabs: TAB_KEYS.slice() }
-    };
-    users.push(profile);
-    await saveUsersList();
+    // Pas encore de fiche : comptes créés avant la mise à jour de sécurité → on reprend l'ancienne liste
+    const legacy = await loadLegacyUsers();
+    if(legacy===null) return null;                    // lecture refusée : ce compte n'est pas autorisé
+    profile = legacy.find(u=>u.email && u.email.toLowerCase()===email) || null;
+    if(!profile && legacy.length>0) return null;      // compte inconnu (accès retiré, ou créé hors de l'application)
+    if(!profile){
+      // Tout premier compte (aucun utilisateur nulle part) : il devient l'admin
+      profile = { id: fbUser.uid, ref: 'U-0001', email: fbUser.email, role: 'admin', workspace: 'main', permissions: { tabs: TAB_KEYS.slice() } };
+    }
+    if(!(await saveMember(profile))) throw new Error('Impossible d\'enregistrer ton profil. Réessaie dans un instant.');
   }
   WORKSPACE_ID = profile.workspace || 'main';
+  if(isMainAdmin(profile)) await migrateLegacyUsers();
   return profile;
 }
+function isMainAdmin(u){ return !!u && u.role==='admin' && (u.workspace||'main')==='main'; }
 
-// Enregistre la date/heure de cette connexion dans le profil (liste des utilisateurs).
+// À la connexion de l'admin : recrée les fiches des comptes de l'ancienne liste qui n'en ont pas encore
+// (à faire AVANT de publier les nouvelles règles Firestore, sinon ces comptes seraient refusés).
+async function migrateLegacyUsers(){
+  const legacy = await loadLegacyUsers();
+  if(!legacy || !legacy.length) return;
+  if(!(await loadUsers())) return;
+  const known = new Set(users.map(u=>(u.email||'').toLowerCase()));
+  for(const u of legacy){
+    if(u.email && !known.has(u.email.toLowerCase())){ if(await saveMember(u)) users.push(u); }
+  }
+}
+
+// Enregistre la date/heure de cette connexion dans la fiche de l'utilisateur.
 // On garde aussi la connexion précédente, affichée sous le nom dans la barre latérale.
 // Une ouverture de l'application avec une session déjà active compte comme une connexion.
 async function recordLogin(profile){
   const now = Date.now();
-  profile.previousLoginAt = profile.lastLoginAt || null;
-  profile.lastLoginAt = now;
-  profile.loginCount = (profile.loginCount || 0) + 1;
-  // Relit la liste juste avant d'écrire, pour ne pas écraser une modification faite entre-temps par un admin
-  if(await loadUsers()){
-    const u = users.find(x=>x.email && x.email.toLowerCase()===profile.email.toLowerCase());
-    if(u){
-      u.previousLoginAt = profile.previousLoginAt; u.lastLoginAt = now; u.loginCount = profile.loginCount;
-      try{ await saveUsersList(); }catch(e){}
-      return u;   // même objet que dans la liste (comme avant)
-    }
-  }
+  const fields = { previousLoginAt: profile.lastLoginAt || null, lastLoginAt: now, loginCount: (profile.loginCount || 0) + 1 };
+  Object.assign(profile, fields);
+  try{ await memberDoc(profile.email).update(fields); }catch(e){ console.error('recordLogin', e); }
   return profile;
 }
 
@@ -9030,7 +9055,8 @@ function firebaseErrorToFrench(err){
 function applyPermissions(){
   if(!currentUser) return;
   const isAdmin = currentUser.role==='admin';
-  const allowedTabs = isAdmin ? TAB_KEYS.concat(['utilisateurs']) : (currentUser.permissions && currentUser.permissions.tabs ? currentUser.permissions.tabs : []);
+  // Onglet Utilisateurs : seulement l'admin de l'espace réel (un compte démo ne gère pas les vrais comptes)
+  const allowedTabs = isAdmin ? TAB_KEYS.concat(isMainAdmin(currentUser) ? ['utilisateurs'] : []) : (currentUser.permissions && currentUser.permissions.tabs ? currentUser.permissions.tabs : []);
 
   document.querySelectorAll('.nav-item[data-tab]').forEach(item=>{
     const tab = item.dataset.tab;
@@ -9064,10 +9090,8 @@ function applyPermissions(){
   renderDriveStatus();
   if(driveEnabled()) driveLoadGis().catch(()=>{});   // précharge Google pour que le clic ouvre la fenêtre sans délai
 
-  if(isAdmin){
-    populateUsrSelect();
-    renderUsersTable();
-    clearUsrForm();
+  if(isMainAdmin(currentUser)){
+    loadUsers().then(()=>{ populateUsrSelect(); renderUsersTable(); clearUsrForm(); });
   }
 }
 
