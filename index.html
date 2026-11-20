@@ -467,6 +467,11 @@
   }
   .sidebar-user-lastlogin{font-size:10.5px; color:#9FB8A6; margin:-4px 0 8px; line-height:1.35;}
   .sidebar-user-lastlogin:empty{display:none;}
+  .sidebar-drive{display:block; width:100%; text-align:left; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+    color:#CFE0D4; border-radius:7px; padding:6px 9px; margin:0 0 8px; font-size:11px; line-height:1.35; cursor:pointer; font-family:inherit;}
+  .sidebar-drive:hover{background:rgba(255,255,255,0.12);}
+  .sidebar-drive.warn{background:rgba(196,80,28,0.25); border-color:#C4501C; color:#FFE3D3;}
+  .sidebar-drive.ok{color:#B7E4C2;}
   .sidebar-logout-btn{
     width:100%; background:rgba(255,255,255,0.08); color:var(--paper); border:1px solid rgba(255,255,255,0.15);
     border-radius:7px; padding:7px 10px; font-size:11.5px; font-weight:600; cursor:pointer;
@@ -639,6 +644,7 @@
       <div class="sidebar-user-name" id="sidebarUserName">—</div>
       <div class="sidebar-user-role" id="sidebarUserRole">—</div>
       <div class="sidebar-user-lastlogin" id="sidebarLastLogin"></div>
+      <button type="button" class="sidebar-drive" id="driveStatus" style="display:none;"></button>
       <button class="sidebar-logout-btn" id="logoutBtn">Se déconnecter</button>
     </div>
   </div>
@@ -683,6 +689,7 @@
         <div class="form-actions" style="margin-top:0;">
           <button class="btn" id="backupExportBtn">Télécharger une sauvegarde (JSON)</button>
           <button class="btn secondary" id="backupImportBtn">Restaurer une sauvegarde</button>
+          <button class="btn secondary" id="driveBackupNowBtn" style="display:none;">Sauvegarder sur Google Drive maintenant</button>
           <input type="file" id="backupFileInput" accept=".json" style="display:none;">
         </div>
         <div id="backupInfo" style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#8A9A8D; margin-top:12px;"></div>
@@ -1761,6 +1768,8 @@ window.storage = {
       for(let i=n+1; i<=prev; i++){ try{ await chunkDoc(key, i).delete(); }catch(e){} }   // anciens morceaux devenus inutiles
       _chunkCount[wk(key)] = n;
       if(_loadedAt[lk] !== undefined) _loadedAt[lk] = stamp;
+      else _loadedAt[lk] = stamp;
+      if(!key.startsWith('zz_') && typeof driveSchedule === 'function') driveSchedule();   // sauvegarde Drive ~1 min après la dernière saisie
       return { key, value, shared: !!shared };
     }catch(e){ console.error('storage.set error', key, e); return null; }
   },
@@ -8429,12 +8438,177 @@ function renderUsersTable(){
 }
 
 // --- Sauvegarde / Restauration ---
-document.getElementById('backupExportBtn').addEventListener('click', ()=>{
-  const backup = {
+// Contenu d'une sauvegarde (même format pour le téléchargement et pour Google Drive)
+function buildBackupData(){
+  let last = 0;
+  Object.keys(_loadedAt).forEach(k=>{ if(k.startsWith(WORKSPACE_ID+'/') && !k.includes('/zz_')) last = Math.max(last, _loadedAt[k]||0); });
+  return {
     version: 1,
     exportedAt: new Date().toISOString(),
+    derniereSaisieAt: last || Date.now(),
     bons, fournisseurs, clients, produits, stations, bankOps, bankCheques, bankCredits, clientReglements, fournisseurReglements, factures, avoirs
   };
+}
+
+// --- Sauvegarde automatique sur Google Drive ---
+// Dossier « HDGes Sauvegardes » dans le Drive de l'admin, avec 2 fichiers toujours les mêmes :
+//   HDGes_sauvegarde.json        → remplacé ~1 min après chaque saisie (dernière version)
+//   HDGes_sauvegarde_veille.json → remplacé 1 fois par jour (état de la veille, pour revenir en arrière)
+// L'application n'a accès qu'aux fichiers qu'elle a créés elle-même (autorisation « drive.file »).
+const GOOGLE_CLIENT_ID = '468851306490-pggbup1efvtf2b6sldco0pa7ujdllpar.apps.googleusercontent.com';   // ← identifiant OAuth créé dans la console Google Cloud (vide = fonction désactivée)
+const DRIVE_FOLDER = 'HDGes Sauvegardes';
+const DRIVE_MAIN = 'HDGes_sauvegarde.json';
+const DRIVE_VEILLE = 'HDGes_sauvegarde_veille.json';
+const DRIVE_DELAY = 60000;     // attend 1 min sans nouvelle saisie avant d'envoyer
+let driveToken = null, driveTokenExp = 0;
+let driveTimer = null, drivePending = false, driveBusy = false, driveError = '';
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ if(v===null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){} }
+
+function driveEnabled(){ return !!GOOGLE_CLIENT_ID && !!currentUser && currentUser.role==='admin' && WORKSPACE_ID==='main'; }
+function driveHasToken(){
+  if(!driveToken){ driveToken = lsGet('hdges_drive_tok'); driveTokenExp = +(lsGet('hdges_drive_exp')||0); }
+  return !!driveToken && Date.now() < driveTokenExp - 60000;
+}
+function driveLoadGis(){
+  return new Promise((res,rej)=>{
+    if(window.google && google.accounts && google.accounts.oauth2) return res();
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+    s.onload = ()=>res(); s.onerror = ()=>rej(new Error('Google inaccessible (connexion internet ?)'));
+    document.head.appendChild(s);
+  });
+}
+// Demande l'autorisation Google : uniquement depuis un clic (sinon le navigateur bloque la fenêtre Google)
+async function driveConnect(){
+  await driveLoadGis();
+  return new Promise((resolve,reject)=>{
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      login_hint: (currentUser && currentUser.email) || '',
+      callback: r=>{
+        if(r.error){ reject(new Error(r.error)); return; }
+        driveToken = r.access_token; driveTokenExp = Date.now() + (r.expires_in||3600)*1000;
+        lsSet('hdges_drive_tok', driveToken); lsSet('hdges_drive_exp', String(driveTokenExp)); lsSet('hdges_drive_on','1');
+        resolve();
+      },
+      error_callback: e=>reject(new Error((e && e.type)==='popup_closed' ? 'fenêtre Google fermée' : ((e && e.type) || 'connexion annulée')))
+    });
+    client.requestAccessToken({ prompt: lsGet('hdges_drive_on') ? '' : 'consent' });
+  });
+}
+async function driveApi(url, opts){
+  opts = opts || {};
+  const r = await fetch(url, { ...opts, headers: { ...(opts.headers||{}), Authorization: 'Bearer ' + driveToken } });
+  if(r.status===401){ driveToken = null; lsSet('hdges_drive_tok', null); throw new Error('auth'); }
+  if(!r.ok) throw new Error('Drive ' + r.status);
+  return r;
+}
+async function driveFind(name, parent, mime){
+  let q = "name='" + name.replace(/'/g,"\\'") + "' and trashed=false";
+  if(parent) q += " and '" + parent + "' in parents";
+  if(mime) q += " and mimeType='" + mime + "'";
+  const r = await driveApi('https://www.googleapis.com/drive/v3/files?spaces=drive&fields=files(id,appProperties)&q=' + encodeURIComponent(q));
+  return ((await r.json()).files || [])[0] || null;
+}
+async function driveFolderId(){
+  const FM = 'application/vnd.google-apps.folder';
+  const f = await driveFind(DRIVE_FOLDER, null, FM);
+  if(f) return f.id;
+  const r = await driveApi('https://www.googleapis.com/drive/v3/files?fields=id', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: DRIVE_FOLDER, mimeType: FM })
+  });
+  return (await r.json()).id;
+}
+// Crée (fileId vide) ou remplace (fileId connu) un fichier : toujours le même fichier, jamais de copies
+async function driveWrite(fileId, name, parent, content, meta){
+  const b = 'hdges' + Date.now();
+  const metadata = fileId ? meta : { ...meta, name, parents:[parent], mimeType:'application/json' };
+  const body = '--'+b+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) +
+               '\r\n--'+b+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + content + '\r\n--'+b+'--';
+  await driveApi('https://www.googleapis.com/upload/drive/v3/files' + (fileId ? '/'+fileId : '') + '?uploadType=multipart&fields=id', {
+    method: fileId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body
+  });
+}
+
+async function driveBackupNow(){
+  if(!driveEnabled()) return;
+  if(driveBusy){ drivePending = true; return; }
+  if(!driveHasToken()){ drivePending = true; renderDriveStatus(); return; }   // attend un clic sur « Reconnecter »
+  clearTimeout(driveTimer); driveTimer = null;
+  driveBusy = true; drivePending = false; driveError = '';
+  renderDriveStatus();
+  try{
+    const folder = await driveFolderId();
+    const today = todayISO();
+    const main = await driveFind(DRIVE_MAIN, folder);
+    const veille = await driveFind(DRIVE_VEILLE, folder);
+    // 1re sauvegarde du jour : la version précédente (= état de la veille) est d'abord copiée dans le fichier « veille »
+    if(main && (!veille || (veille.appProperties||{}).jour !== today)){
+      const old = await (await driveApi('https://www.googleapis.com/drive/v3/files/' + main.id + '?alt=media')).text();
+      await driveWrite(veille && veille.id, DRIVE_VEILLE, folder, old, { appProperties:{ jour: today }, description: 'Copie de sécurité : état avant le ' + fmtDate(today) });
+    }
+    const data = buildBackupData();
+    await driveWrite(main && main.id, DRIVE_MAIN, folder, JSON.stringify(data),
+      { description: 'Dernière saisie : ' + fmtDateTime(data.derniereSaisieAt) + ' — ' + data.bons.length + ' bons' });
+    lsSet('hdges_drive_last', String(Date.now()));
+  }catch(e){
+    console.error('Sauvegarde Google Drive', e);
+    drivePending = true;
+    driveError = e.message==='auth' ? '' : (e.message || 'erreur');
+  }finally{
+    driveBusy = false;
+    renderDriveStatus();
+    if(drivePending && !driveError && driveHasToken()) driveSchedule();
+  }
+}
+function driveSchedule(){
+  if(!driveEnabled()) return;
+  drivePending = true;
+  clearTimeout(driveTimer);
+  driveTimer = setTimeout(driveBackupNow, DRIVE_DELAY);
+  renderDriveStatus();
+}
+function renderDriveStatus(){
+  const el = document.getElementById('driveStatus');
+  const btn = document.getElementById('driveBackupNowBtn');
+  if(!el) return;
+  if(!driveEnabled()){ el.style.display = 'none'; if(btn) btn.style.display = 'none'; return; }
+  el.style.display = 'block'; if(btn) btn.style.display = '';
+  const last = +(lsGet('hdges_drive_last')||0);
+  const lastTxt = last ? fmtDateTime(last) : 'jamais';
+  let txt, cls = '';
+  if(!lsGet('hdges_drive_on')){ txt = '☁️ Activer la sauvegarde Google Drive'; cls = 'warn'; }
+  else if(driveBusy){ txt = '☁️ Sauvegarde Drive en cours…'; }
+  else if(driveError){ txt = '⚠️ Échec sauvegarde Drive (' + driveError + ') — cliquer pour réessayer'; cls = 'warn'; }
+  else if(drivePending && !driveHasToken()){ txt = '⚠️ Drive déconnecté — cliquer pour sauvegarder'; cls = 'warn'; }
+  else if(drivePending){ txt = '☁️ Sauvegarde Drive dans 1 min…'; }
+  else { txt = '✓ Drive : sauvegardé le ' + lastTxt; cls = 'ok'; }
+  el.textContent = txt;
+  el.className = 'sidebar-drive' + (cls ? ' ' + cls : '');
+  el.title = 'Dernière sauvegarde Google Drive : ' + lastTxt;
+}
+async function driveClick(){
+  try{
+    if(!driveHasToken()) await driveConnect();
+    await driveBackupNow();
+    if(!driveError) showToast('✓ Sauvegarde Google Drive à jour');
+  }catch(e){
+    showToast('Google Drive : ' + (e.message || 'connexion impossible'));
+    renderDriveStatus();
+  }
+}
+document.getElementById('driveStatus').addEventListener('click', driveClick);
+document.getElementById('driveBackupNowBtn').addEventListener('click', driveClick);
+// Quand l'application passe en arrière-plan / se ferme : envoie tout de suite ce qui attend (au mieux)
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='hidden' && drivePending && !driveBusy && driveHasToken()) driveBackupNow();
+});
+
+document.getElementById('backupExportBtn').addEventListener('click', ()=>{
+  const backup = buildBackupData();
   const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -8887,6 +9061,8 @@ function applyPermissions(){
   document.getElementById('sidebarLastLogin').textContent = currentUser.previousLoginAt
     ? 'Connexion précédente : ' + fmtDateTime(currentUser.previousLoginAt)
     : 'Première connexion';
+  renderDriveStatus();
+  if(driveEnabled()) driveLoadGis().catch(()=>{});   // précharge Google pour que le clic ouvre la fenêtre sans délai
 
   if(isAdmin){
     populateUsrSelect();
@@ -8896,6 +9072,8 @@ function applyPermissions(){
 }
 
 document.getElementById('logoutBtn').addEventListener('click', ()=>{
+  clearTimeout(driveTimer); driveTimer = null; drivePending = false;
+  driveToken = null; lsSet('hdges_drive_tok', null); lsSet('hdges_drive_exp', null);
   fbAuth.signOut();
   document.getElementById('login_email').value='';
   document.getElementById('login_password').value='';
