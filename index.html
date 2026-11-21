@@ -1713,11 +1713,86 @@ function workspaceDoc(key){
 // Une clé = un document Firestore (limite 1 Mo par document). Pour qu'une liste qui grossit (ex. des milliers de bons)
 // ne dépasse jamais cette limite, une valeur trop longue est coupée en morceaux « clé__c1, clé__c2… » (transparent).
 const STORAGE_CHUNK = 300000;           // caractères par morceau (marge large sous 1 Mo, même avec des accents)
+const STORAGE_BATCH_MAX = 2400000;      // jusqu'à 8 morceaux : écriture « tout ou rien » (limite Firestore 10 Mo par envoi)
 const _loadFailed = {};                 // clés dont la lecture a échoué : jamais réécrites (évite d'écraser de vraies données par une liste vide)
 const _loadedAt = {};                   // updatedAt vu à la lecture : si le document a changé depuis (autre appareil), on refuse d'écraser
 const _chunkCount = {};
+const _base = {};                       // dernière version lue/écrite de chaque liste (texte JSON) : sert à fusionner
 const wk = key => WORKSPACE_ID + '/' + key;                 // nb de morceaux connus par clé (pour nettoyer les anciens)
 function chunkDoc(key, i){ return workspaceDoc(key + '__c' + i); }
+// --- Fusion quand deux appareils enregistrent la même liste presque en même temps ---
+// base = version que CET appareil avait lue ; local = ce qu'il veut enregistrer ; remote = version actuelle du cloud.
+// Chaque fiche (bon, règlement, client…) est reconnue par son « id » :
+//   - ajoutée ici → ajoutée au cloud ;   - modifiée ici → remplace celle du cloud ;
+//   - supprimée ici → retirée du cloud ; - ajoutée/modifiée ailleurs et pas touchée ici → conservée.
+// Si deux appareils ont créé une pièce avec le même numéro (ex. BON-0012), la nôtre prend le numéro suivant.
+function mergeLists(baseArr, localArr, remoteArr){
+  const isList = a => Array.isArray(a) && a.every(x=>x && typeof x==='object' && x.id!==undefined);
+  if(!isList(baseArr) || !isList(localArr) || !isList(remoteArr)) return null;
+  const S = x => JSON.stringify(x);
+  const baseById = new Map(baseArr.map(x=>[x.id, S(x)]));
+  const localById = new Map(localArr.map(x=>[x.id, x]));
+  const deleted = new Set(baseArr.filter(x=>!localById.has(x.id)).map(x=>x.id));
+  const changed = localArr.filter(x=>!baseById.has(x.id) || baseById.get(x.id)!==S(x));
+  const changedIds = new Set(changed.map(x=>x.id));
+  const added = new Set(localArr.filter(x=>!baseById.has(x.id)).map(x=>x.id));
+  const out = [];
+  const seen = new Set();
+  remoteArr.forEach(x=>{
+    if(deleted.has(x.id)) return;                          // supprimé sur cet appareil
+    out.push(changedIds.has(x.id) ? localById.get(x.id) : x);
+    seen.add(x.id);
+  });
+  changed.forEach(x=>{ if(!seen.has(x.id)) out.push(x); }); // nos ajouts (et nos modifs d'une fiche supprimée ailleurs : on ne perd pas la saisie)
+  // Numéros en double (même réf. créée sur deux appareils) : la fiche ajoutée ici est renumérotée
+  out.forEach(x=>{
+    if(!added.has(x.id) || !x.ref) return;
+    const m = String(x.ref).match(/^(.*)-(\d+)$/);
+    if(m && out.some(y=>y!==x && y.ref===x.ref)) x.ref = computeNextRef(out, m[1]);
+  });
+  return out;
+}
+// Variable globale + affichage à mettre à jour quand une liste a été fusionnée
+const STORAGE_LISTS = {
+  'bons-list': v=>{ bons = v; },
+  'fournisseurs-list': v=>{ fournisseurs = v; },
+  'clients-list': v=>{ clients = v; },
+  'produits-list': v=>{ produits = v; },
+  'stations-list': v=>{ stations = v; },
+  'banque-operations-list': v=>{ bankOps = v; },
+  'banque-cheques-list': v=>{ bankCheques = v; },
+  'banque-credits-list': v=>{ bankCredits = v; },
+  'factures-list': v=>{ factures = v; },
+  'avoirs-list': v=>{ avoirs = v; },
+  'client-reglements-list': v=>{ clientReglements = v; },
+  'fournisseur-reglements-list': v=>{ fournisseurReglements = v; },
+};
+async function readRemote(key){
+  const doc = await workspaceDoc(key).get();
+  if(!doc.exists) return { value:'[]', updatedAt:0, chunks:0 };
+  const data = doc.data();
+  const n = data.chunks || 0;
+  let value = data.value;
+  if(n > 0){
+    const parts = await Promise.all(Array.from({length:n}, (_,i)=>chunkDoc(key, i+1).get()));
+    if(parts.some(p=>!p.exists)) throw new Error('Données incomplètes: ' + key);
+    value = parts.map(p=>p.data().value).join('');
+  }
+  return { value, updatedAt: data.updatedAt || 0, chunks: n };
+}
+async function mergeWithRemote(key, localValue){
+  const lk = wk(key);
+  if(!STORAGE_LISTS[key] || _base[lk]===undefined) return null;
+  try{
+    const remote = await readRemote(key);
+    const merged = mergeLists(JSON.parse(_base[lk]), JSON.parse(String(localValue)), JSON.parse(remote.value));
+    if(!merged) return null;
+    STORAGE_LISTS[key](merged);                              // l'écran utilise aussitôt la version fusionnée
+    if(typeof refreshAfterMerge === 'function') setTimeout(refreshAfterMerge, 0);
+    return { value: JSON.stringify(merged), remoteAt: remote.updatedAt, chunks: remote.chunks };
+  }catch(e){ console.error('Fusion impossible', key, e); return null; }
+}
+
 window.storage = {
   async get(key, shared){
     let doc;
@@ -1737,6 +1812,7 @@ window.storage = {
       value = parts.map(p=>p.data().value).join('');
     }
     delete _loadFailed[wk(key)];
+    _base[wk(key)] = value;                                  // version de référence pour fusionner plus tard
     return { key, value, shared: !!shared };
   },
   async set(key, value, shared){
@@ -1747,9 +1823,17 @@ window.storage = {
         const remote = await workspaceDoc(key).get();
         const remoteAt = remote.exists ? (remote.data().updatedAt || 0) : 0;
         if(remoteAt > _loadedAt[lk]){
-          _loadFailed[lk] = true;
-          if(typeof showToast === 'function') showToast('⚠️ Ces données ont été modifiées sur un autre appareil : recharge l\'application. Ta dernière modification n\'a PAS été enregistrée (pour ne pas écraser l\'autre appareil).');
-          return null;
+          // Un autre appareil a enregistré entre-temps : on FUSIONNE (ses ajouts + les nôtres)
+          // au lieu d'écraser ou de refuser.
+          const merged = await mergeWithRemote(key, value);
+          if(merged===null){
+            _loadFailed[lk] = true;
+            if(typeof showToast === 'function') showToast('⚠️ Ces données ont été modifiées sur un autre appareil : recharge l\'application. Ta dernière modification n\'a PAS été enregistrée (pour ne pas écraser l\'autre appareil).');
+            return null;
+          }
+          value = merged.value;
+          _loadedAt[lk] = merged.remoteAt;
+          _chunkCount[lk] = merged.chunks;
         }
       }
       const stamp = Math.max(Date.now(), (_loadedAt[lk] || 0) + 1);
@@ -1758,17 +1842,26 @@ window.storage = {
       let n = 0;
       if(str.length > STORAGE_CHUNK){
         n = Math.ceil(str.length / STORAGE_CHUNK);
-        for(let i=0; i<n; i++){
-          await chunkDoc(key, i+1).set({ value: str.slice(i*STORAGE_CHUNK, (i+1)*STORAGE_CHUNK), updatedAt: stamp });
+        if(str.length <= STORAGE_BATCH_MAX && typeof db.batch === 'function'){
+          // « Tout ou rien » : tous les morceaux + l'en-tête partent ensemble ; une coupure réseau
+          // ne peut pas laisser une liste à moitié écrite (mélange ancien / nouveau).
+          const batch = db.batch();
+          for(let i=0; i<n; i++) batch.set(chunkDoc(key, i+1), { value: str.slice(i*STORAGE_CHUNK, (i+1)*STORAGE_CHUNK), updatedAt: stamp });
+          batch.set(workspaceDoc(key), { value: '', chunks: n, updatedAt: stamp });
+          await batch.commit();
+        } else {
+          for(let i=0; i<n; i++){
+            await chunkDoc(key, i+1).set({ value: str.slice(i*STORAGE_CHUNK, (i+1)*STORAGE_CHUNK), updatedAt: stamp });
+          }
+          await workspaceDoc(key).set({ value: '', chunks: n, updatedAt: stamp });
         }
-        await workspaceDoc(key).set({ value: '', chunks: n, updatedAt: stamp });
       } else {
         await workspaceDoc(key).set({ value: str, chunks: 0, updatedAt: stamp });
       }
       for(let i=n+1; i<=prev; i++){ try{ await chunkDoc(key, i).delete(); }catch(e){} }   // anciens morceaux devenus inutiles
       _chunkCount[wk(key)] = n;
-      if(_loadedAt[lk] !== undefined) _loadedAt[lk] = stamp;
-      else _loadedAt[lk] = stamp;
+      _loadedAt[lk] = stamp;
+      _base[lk] = str;
       if(!key.startsWith('zz_') && typeof driveSchedule === 'function') driveSchedule();   // sauvegarde Drive ~1 min après la dernière saisie
       return { key, value, shared: !!shared };
     }catch(e){ console.error('storage.set error', key, e); return null; }
@@ -8948,7 +9041,12 @@ async function silentRefresh(){
     await loadClientReglements();
     await loadFournisseurReglements();
   }catch(e){ return; }
+  refreshAfterMerge();
+}
 
+// Rafraîchit l'écran affiché avec les données en mémoire (après rechargement ou fusion)
+function refreshAfterMerge(){
+  if(!currentUser) return;
   const activeTab = document.querySelector('.nav-item.active')?.dataset.tab;
   renderDashboard();
   renderBankAlertBox();
