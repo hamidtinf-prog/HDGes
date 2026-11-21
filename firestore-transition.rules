@@ -1,0 +1,80 @@
+rules_version = '2';
+
+// ⚠️ RÈGLES DE TRANSITION (à utiliser quelques minutes seulement) ⚠️
+// Elles permettent à chaque compte de l'ancienne liste de créer SA fiche « members ».
+// 1) Publier ces règles  2) l'admin se connecte (Ctrl+F5) et vérifie l'onglet Utilisateurs
+// 3) Publier ensuite les règles définitives (firestore.rules).
+//
+// Règles de sécurité Firestore pour HDGes
+//
+// Principe : un compte connecté n'a accès à RIEN tant qu'il n'a pas de fiche dans
+// « members/{email} ». Cette fiche (créée uniquement par un admin) indique :
+//   - role      : 'admin' ou 'invite'
+//   - workspace : 'main' (vraies données) ou 'demo' (données d'essai isolées)
+//   - demoExpiresAt : fin de validité d'un compte démo (millisecondes)
+// Ainsi, créer un compte avec la clé publique du site ne donne accès à aucune donnée,
+// et un compte démo ne peut jamais lire ni modifier les vraies données.
+//
+// À publier dans : console Firebase → Firestore Database → Règles → coller → Publier.
+// IMPORTANT : publier SEULEMENT après que l'admin s'est connecté une fois avec la nouvelle
+// version de l'application (elle crée les fiches « members » des comptes existants).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function myPath() {
+      return /databases/$(database)/documents/members/$(myEmail());
+    }
+    function isMember() {
+      return signedIn() && exists(myPath());
+    }
+    function me() {
+      return get(myPath()).data;
+    }
+    function myWorkspace() {
+      return me().get('workspace', 'main');
+    }
+    function notExpired() {
+      return me().get('demoExpiresAt', null) == null
+          || me().get('demoExpiresAt', 0) > request.time.toMillis();
+    }
+    // Admin de l'espace réel (un compte démo est « admin » de sa démo, pas des vrais comptes)
+    function isAdmin() {
+      return isMember() && me().get('role', '') == 'admin' && myWorkspace() == 'main';
+    }
+
+    // Fiches des comptes
+    match /members/{email} {
+      allow read: if signedIn() && (email == myEmail() || isAdmin());
+      // TRANSITION : chacun peut créer SA propre fiche (reprise de l'ancienne liste)
+      allow create: if isAdmin() || (signedIn() && email == myEmail());
+      allow delete: if isAdmin();
+      // L'admin modifie tout ; chacun peut seulement noter sa date de connexion sur SA fiche
+      allow update: if isAdmin()
+        || (signedIn() && email == myEmail()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['lastLoginAt', 'previousLoginAt', 'loginCount']));
+    }
+
+    // Données : chaque compte n'accède qu'à son espace (main ou demo), tant qu'il n'a pas expiré
+    match /workspaces/{workspaceId}/{document=**} {
+      allow read, write: if isMember() && myWorkspace() == workspaceId && notExpired();
+    }
+
+    // TRANSITION : l'ancienne liste des comptes reste lisible pour la reprise
+    match /workspaces/main/data/users-list {
+      allow read: if signedIn();
+    }
+
+    // Tout le reste est fermé
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
