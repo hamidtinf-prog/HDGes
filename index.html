@@ -366,8 +366,13 @@
     .nav-item{padding:8px 10px; font-size:13px; margin-bottom:0;}
     .nav-submenu{flex-direction:row; flex-wrap:wrap; margin:0 0 4px 0;}
     .nav-subitem{padding:6px 10px; font-size:12px;}
-    .sidebar-user{width:100%;}
     .sidebar-spacer{display:none;}
+    /* Bloc utilisateur compact : une ligne (email + déconnexion), le voyant Drive dessous */
+    .sidebar .sidebar-user{width:100%; display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; padding-top:8px; margin-top:4px;}
+    .sidebar .sidebar-user-name{flex:1; min-width:0; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+    .sidebar .sidebar-user-role,.sidebar .sidebar-user-lastlogin{display:none;}
+    .sidebar .sidebar-logout-btn{width:auto; padding:5px 10px; font-size:11px;}
+    .sidebar .sidebar-drive{order:3; flex-basis:100%; margin:0; padding:4px 8px; font-size:10.5px;}
 
     /* Formulaires : 1 colonne partout pour rester lisible */
     .form-grid{grid-template-columns:1fr !important;}
@@ -1455,10 +1460,10 @@
 
         <div class="panel">
           <h3>Détail règlement</h3>
-          <table class="simple scroll-list" id="regTable">
+          <div class="scroll-list" style="padding:0;"><table class="simple" id="regTable">
             <thead><tr><th>Réf</th><th>Date</th><th>Client</th><th>Mode</th><th>N° Chq/Effet</th><th>Montant</th><th>Échéance</th><th>Bons lettrés</th><th></th></tr></thead>
             <tbody></tbody>
-          </table>
+          </table></div>
         </div>
       </div>
     </div>
@@ -2239,8 +2244,15 @@ function showToast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2200);
+  // Durée selon la longueur : un message long (avertissement) reste le temps d'être lu
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(()=>t.classList.remove('show'), Math.min(9000, Math.max(2200, String(msg).length * 55)));
 }
+
+// Téléphone / tablette : après un choix dans le menu (en haut), on amène directement l'écran choisi
+document.querySelectorAll('.nav-item, .nav-subitem').forEach(el=>el.addEventListener('click', ()=>{
+  if(window.innerWidth <= 900) setTimeout(()=>{ const m = document.querySelector('.main'); if(m) m.scrollIntoView({behavior:'smooth', block:'start'}); }, 50);
+}));
 
 // --- Tab switching ---
 document.querySelectorAll('.nav-item').forEach(item=>{
@@ -7978,7 +7990,7 @@ function readLettrageFromForm(){
 function clearRegForm(){
   document.getElementById('reg_client').value = '';
   populateRegStation('');
-  document.getElementById('reg_date').value = '';
+  document.getElementById('reg_date').value = todayISO();   // date du jour par défaut
   document.getElementById('reg_mode').value = '';
   document.getElementById('reg_numero').value = '';
   document.getElementById('reg_montant').value = '';
@@ -8199,7 +8211,7 @@ function readLettrageFournFromForm(){
 
 function clearRegFournForm(){
   document.getElementById('regf_fourn').value = '';
-  document.getElementById('regf_date').value = '';
+  document.getElementById('regf_date').value = todayISO();  // date du jour par défaut
   document.getElementById('regf_mode').value = '';
   document.getElementById('regf_numero').value = '';
   document.getElementById('regf_montant').value = '';
@@ -8930,6 +8942,8 @@ async function initApp(){
   document.getElementById('op_date').value = todayISO();
   document.getElementById('ce_dateOp').value = todayISO();
   document.getElementById('cr_date').value = todayISO();
+  document.getElementById('reg_date').value = todayISO();
+  document.getElementById('regf_date').value = todayISO();
   document.getElementById('fact_date').value = todayISO();
   document.getElementById('op_refPreview').value = computeNextRef(bankOps,'OP');
   document.getElementById('regf_refPreview').value = computeNextRef(fournisseurReglements,'REGF');
