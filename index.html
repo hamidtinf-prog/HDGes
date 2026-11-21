@@ -1635,7 +1635,7 @@
         </div>
         <div class="form-grid" style="margin-top:9px; grid-template-columns:repeat(3,1fr);">
           <div class="field"><label>Email</label><input type="email" id="usr_email" placeholder=""></div>
-          <div class="field"><label>Mot de passe</label><input type="password" id="usr_password" placeholder="6 caractères min. (nouveau compte)"></div>
+          <div class="field"><label>Mot de passe</label><input type="password" id="usr_password" placeholder="Nouveau compte : 6 caractères min. · Vide = compte qui existe déjà"></div>
           <div class="field"><label>Rôle</label>
             <select id="usr_role">
               <option value="invite">Invité (accès limité)</option>
@@ -8307,7 +8307,7 @@ function clearUsrForm(){
   document.getElementById('usr_email').disabled = false;
   document.getElementById('usr_password').value='';
   document.getElementById('usr_password').style.display = 'block';
-  document.getElementById('usr_password').placeholder='6 caractères min. (nouveau compte)';
+  document.getElementById('usr_password').placeholder='Nouveau compte : 6 caractères min. · Vide = compte qui existe déjà';
   document.getElementById('usr_editHint').style.display = 'none';
   document.getElementById('usr_role').value='invite';
   document.getElementById('usr_demo').checked = false;
@@ -8352,18 +8352,27 @@ document.getElementById('usrSaveBtn').addEventListener('click', async ()=>{
   const role = isDemo ? 'admin' : document.getElementById('usr_role').value;
   if(!email){ showToast('Indique un email'); return; }
   if(users.some(u=>u.email.toLowerCase()===email.toLowerCase())){ showToast('Cet email a déjà un compte'); return; }
-  if(!password || password.length<6){ showToast('Mot de passe : au moins 6 caractères'); return; }
+  // Mot de passe vide = redonner l'accès à un compte de connexion qui existe déjà (ancien utilisateur)
+  const regrant = !password;
+  if(regrant && !confirm(`Aucun mot de passe saisi.\n\nRedonner l'accès à un compte qui EXISTE DÉJÀ (« ${email} ») ?\nIl se connectera avec son ancien mot de passe.\n\n(Pour créer un NOUVEAU compte, annulez et saisissez un mot de passe.)`)) return;
+  if(!regrant && password.length<6){ showToast('Mot de passe : au moins 6 caractères'); return; }
   const perms = role==='admin' ? TAB_KEYS.slice() : readPermissionsFromGrid();
 
-  let uid;
-  try{
+  let uid = 'email:' + email.toLowerCase();
+  if(!regrant) try{
     const secAuth = getSecondaryAuth();
     const cred = await secAuth.createUserWithEmailAndPassword(email, password);
     uid = cred.user.uid;
     await secAuth.signOut();
   }catch(err){
-    showToast(firebaseErrorToFrench(err));
-    return;
+    // Compte de connexion déjà existant (ex. ancien utilisateur dont la fiche a disparu) :
+    // on peut lui redonner l'accès sans recréer le compte — son mot de passe reste l'ancien.
+    if(String(err && err.code).includes('email-already-in-use')){
+      if(!confirm(`Le compte de connexion « ${email} » existe déjà.\n\nLui redonner l'accès à l'application ?\n(Son mot de passe reste l'ancien. S'il l'a oublié : lien « Mot de passe oublié ? » sur l'écran de connexion.)`)) return;
+    } else {
+      showToast(firebaseErrorToFrench(err));
+      return;
+    }
   }
 
   const record = {
