@@ -6805,6 +6805,19 @@ function ensureHtml2Pdf(){
 // Génère un PDF (via html2canvas + jsPDF, en évitant le worker html2pdf().toPdf()
 // dont le clonage de DOM est connu pour produire des PDF blancs) à partir d'un
 // fragment HTML. Retourne { blob, filename } ou lève une erreur explicite.
+// Mise en forme des documents (PDF généré et aperçu sur téléphone)
+const PRINT_DOC_CSS = `
+    .print-header h1{ font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 4px 0; color:#1E3A5F; }
+    .print-subtitle{ font-size:12px; color:#333; margin-bottom:2px; }
+    .print-date{ font-size:10px; color:#666; margin-bottom:14px; }
+    table.print-summary{ width:100%; border-collapse:collapse; margin:0 0 16px 0; font-size:11px; }
+    table.print-summary td{ padding:5px 8px; border:1px solid #ccc; }
+    table.print-summary td.k{ font-weight:700; background:#f2f2f2; width:22%; }
+    table.print-details, table.doc-table{ width:100%; border-collapse:collapse; font-size:9.5px; }
+    table.print-details th, table.print-details td, table.doc-table th, table.doc-table td{ border:1px solid #ccc; padding:4px 6px; text-align:left; }
+    table.print-details th, table.doc-table th{ background:#eee; font-weight:700; }
+    table.print-details tfoot td, table.doc-table tfoot td{ font-weight:700; background:#f5f5f5; }
+  `;
 async function generatePdfBlob(title, contentHtml){
   await ensureHtml2Pdf();
 
@@ -6833,18 +6846,7 @@ async function generatePdfBlob(title, contentHtml){
   // impression (@media print) ; comme html2canvas capture le rendu écran normal, on les
   // redéclare ici sans le média "print" pour que le PDF généré soit bien mis en forme.
   const printStyleOverride = document.createElement('style');
-  printStyleOverride.textContent = `
-    .print-header h1{ font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 4px 0; color:#1E3A5F; }
-    .print-subtitle{ font-size:12px; color:#333; margin-bottom:2px; }
-    .print-date{ font-size:10px; color:#666; margin-bottom:14px; }
-    table.print-summary{ width:100%; border-collapse:collapse; margin:0 0 16px 0; font-size:11px; }
-    table.print-summary td{ padding:5px 8px; border:1px solid #ccc; }
-    table.print-summary td.k{ font-weight:700; background:#f2f2f2; width:22%; }
-    table.print-details, table.doc-table{ width:100%; border-collapse:collapse; font-size:9.5px; }
-    table.print-details th, table.print-details td, table.doc-table th, table.doc-table td{ border:1px solid #ccc; padding:4px 6px; text-align:left; }
-    table.print-details th, table.doc-table th{ background:#eee; font-weight:700; }
-    table.print-details tfoot td, table.doc-table tfoot td{ font-weight:700; background:#f5f5f5; }
-  `;
+  printStyleOverride.textContent = PRINT_DOC_CSS;
   container.appendChild(printStyleOverride);
   const contentWrap = document.createElement('div');
   contentWrap.innerHTML = brandDoc(contentHtml);
@@ -7280,7 +7282,49 @@ function printRootVars(){
   return ':root{' + names.map(n=>{ const v = cs.getPropertyValue(n).trim(); return v ? n + ':' + v + ';' : ''; }).join('') + '}';
 }
 
+// Téléphone / tablette : window.print() depuis une fenêtre ouverte par l'application ne fonctionne
+// pas (ou mal) sur la plupart des téléphones et dans l'application installée. L'aperçu s'ouvre
+// alors DANS l'application, avec Télécharger PDF / Partager (même moteur que « Télécharger PDF »).
+function isTouchDevice(){
+  try{ return window.matchMedia('(pointer:coarse)').matches || window.innerWidth <= 900; }catch(e){ return window.innerWidth <= 900; }
+}
+function showPreviewOverlay(title, rawHtml){
+  closePreviewOverlay();
+  const ov = document.createElement('div');
+  ov.id = 'previewOverlay';
+  ov.style.cssText = 'position:fixed; inset:0; z-index:9000; background:#E9EDF2; display:flex; flex-direction:column;';
+  ov.innerHTML = `
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:10px 12px; background:#1E3A5F; color:#fff; box-shadow:0 2px 8px rgba(0,0,0,.2);">
+      <div style="flex:1 1 100%; font:600 14px Inter,Arial,sans-serif; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(title)}</div>
+      <button type="button" id="pvDownload" style="flex:1; padding:11px 10px; border:0; border-radius:8px; background:#fff; color:#1E3A5F; font-weight:700; font-size:14px;">⬇️ Télécharger PDF</button>
+      <button type="button" id="pvShare" style="flex:1; padding:11px 10px; border:0; border-radius:8px; background:#2E6DA4; color:#fff; font-weight:700; font-size:14px;">📤 Partager</button>
+      <button type="button" id="pvClose" aria-label="Fermer" style="padding:11px 14px; border:1px solid rgba(255,255,255,.4); border-radius:8px; background:transparent; color:#fff; font-weight:700; font-size:14px;">✕</button>
+    </div>
+    <div id="pvScroll" style="flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+      <div id="pvDoc" class="pv-doc" style="width:800px; background:#fff; padding:20px; box-shadow:0 1px 6px rgba(0,0,0,.15); font-family:Arial,Helvetica,sans-serif; color:#111;"></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const docEl = ov.querySelector('#pvDoc');
+  docEl.innerHTML = '<style>' + PRINT_DOC_CSS + ' .pv-doc table{display:table !important; width:100% !important; max-width:none !important; white-space:normal !important; border-collapse:collapse;} .pv-doc th,.pv-doc td{border:1px solid #ccc; padding:4px 6px; text-align:left;} .pv-doc th{background:#eee;}</style>' + brandDoc(rawHtml);
+  // Le document (800 px) est réduit pour tenir dans la largeur de l'écran
+  const fit = ()=>{ const k = Math.min(1, (window.innerWidth - 20) / 800); docEl.style.zoom = k; };
+  fit();
+  ov._onResize = fit; window.addEventListener('resize', fit);
+  ov.querySelector('#pvDownload').addEventListener('click', ()=>downloadPdfDocument(title, rawHtml));
+  ov.querySelector('#pvShare').addEventListener('click', ()=>sharePdfDocument(title, rawHtml));
+  ov.querySelector('#pvClose').addEventListener('click', closePreviewOverlay);
+  document.body.style.overflow = 'hidden';
+}
+function closePreviewOverlay(){
+  const ov = document.getElementById('previewOverlay');
+  if(!ov) return;
+  window.removeEventListener('resize', ov._onResize);
+  ov.remove();
+  document.body.style.overflow = '';
+}
+
 function openPrintWindow(title, contentHtml){
+  if(isTouchDevice()){ showPreviewOverlay(title, contentHtml); return; }
   contentHtml = brandDoc(contentHtml);
   const win = window.open('', '_blank');
   if(!win){ showToast('⚠️ Le navigateur a bloqué la fenêtre — autorise les pop-ups pour ce site'); return; }
