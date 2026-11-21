@@ -425,7 +425,7 @@
       padding:16px; font-family:'Inter',sans-serif; color:#111;
     }
     .print-header h1{
-      font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 4px 0; color:#1F3D2B;
+      font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 4px 0; color:#1E3A5F;
     }
     .print-subtitle{font-size:12px; color:#333; margin-bottom:2px;}
     .print-date{font-size:10px; color:#666; margin-bottom:14px;}
@@ -699,6 +699,34 @@
         </div>
         <div id="backupInfo" style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#8A9A8D; margin-top:12px;"></div>
         <div id="currentFilePath" style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:#B8934D; margin-top:6px; word-break:break-all;"></div>
+      </div>
+
+      <div class="panel" id="societePanel" style="display:none;">
+        <h3>Informations société — en-tête des documents</h3>
+        <p style="font-size:12.5px; color:#6B7C6F; margin:0 0 14px 0; line-height:1.5;">
+          Ces informations apparaissent en haut et en bas de tous les états, aperçus et PDF (rapports, extraits de compte, balances…).
+        </p>
+        <div class="form-grid">
+          <div class="field"><label>Raison sociale *</label><input type="text" id="soc_nom" placeholder="Ex. STE HD NÉGOCE SARL"></div>
+          <div class="field"><label>Activité</label><input type="text" id="soc_activite" placeholder="Ex. Commerce de fruits et légumes en gros"></div>
+          <div class="field"><label>Adresse</label><input type="text" id="soc_adresse"></div>
+          <div class="field"><label>Ville</label><input type="text" id="soc_ville"></div>
+          <div class="field"><label>Téléphone</label><input type="text" id="soc_tel"></div>
+          <div class="field"><label>Email</label><input type="text" id="soc_email"></div>
+          <div class="field"><label>ICE</label><input type="text" id="soc_ice"></div>
+          <div class="field"><label>RC</label><input type="text" id="soc_rc"></div>
+          <div class="field"><label>IF</label><input type="text" id="soc_if"></div>
+          <div class="field"><label>Patente</label><input type="text" id="soc_patente"></div>
+          <div class="field"><label>Logo (image)</label><input type="file" id="soc_logoFile" accept="image/*"></div>
+          <div class="field" style="display:flex; align-items:flex-end; gap:10px;">
+            <img id="soc_logoPreview" alt="" style="max-height:48px; max-width:140px; display:none; border:1px solid #ddd; border-radius:6px; background:#fff; padding:3px;">
+            <button type="button" class="btn secondary" id="soc_logoRemove" style="display:none;">Retirer le logo</button>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn" id="socSaveBtn">Enregistrer</button>
+          <button class="btn secondary" id="socPreviewBtn">Aperçu de l'en-tête</button>
+        </div>
       </div>
     </div>
 
@@ -6285,7 +6313,7 @@ function buildEtatGlobalHTML(){
 }
 
 function pdfFromContent(contentHtml){
-  document.getElementById('printReportArea').innerHTML = contentHtml;
+  document.getElementById('printReportArea').innerHTML = brandDoc(contentHtml);
   setTimeout(()=>{ window.print(); }, 50);
 }
 
@@ -6806,7 +6834,7 @@ async function generatePdfBlob(title, contentHtml){
   // redéclare ici sans le média "print" pour que le PDF généré soit bien mis en forme.
   const printStyleOverride = document.createElement('style');
   printStyleOverride.textContent = `
-    .print-header h1{ font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 4px 0; color:#1F3D2B; }
+    .print-header h1{ font-family:'Space Grotesk',sans-serif; font-size:18px; margin:0 0 4px 0; color:#1E3A5F; }
     .print-subtitle{ font-size:12px; color:#333; margin-bottom:2px; }
     .print-date{ font-size:10px; color:#666; margin-bottom:14px; }
     table.print-summary{ width:100%; border-collapse:collapse; margin:0 0 16px 0; font-size:11px; }
@@ -6819,7 +6847,7 @@ async function generatePdfBlob(title, contentHtml){
   `;
   container.appendChild(printStyleOverride);
   const contentWrap = document.createElement('div');
-  contentWrap.innerHTML = contentHtml;
+  contentWrap.innerHTML = brandDoc(contentHtml);
   container.appendChild(contentWrap);
   document.body.appendChild(container);
 
@@ -7147,7 +7175,113 @@ document.addEventListener('click', ()=>{
   document.getElementById('opApercuMenu').classList.remove('open');
 });
 
+// --- Informations société : en-tête et pied de page de tous les documents ---
+let societe = {};
+let societeLogoDraft = null;   // logo choisi dans le formulaire, pas encore enregistré
+async function loadSociete(){
+  try{ const res = await window.storage.get('societe-settings', false); societe = res ? (JSON.parse(res.value) || {}) : {}; }
+  catch(e){ societe = {}; }
+}
+async function saveSociete(){
+  try{ const res = await window.storage.set('societe-settings', JSON.stringify(societe), false); return !!res; }
+  catch(e){ return false; }
+}
+function docLetterhead(){
+  const s = societe || {};
+  if(!s.nom) return '';
+  const l1 = [s.adresse, s.ville].filter(Boolean).join(' — ');
+  const l2 = [s.tel ? 'Tél : ' + s.tel : '', s.email].filter(Boolean).join(' · ');
+  const logo = (s.logo && /^data:image\//.test(s.logo)) ? `<img src="${s.logo}" alt="" style="max-height:64px; max-width:150px; object-fit:contain;">` : '';
+  return `<div class="doc-letterhead" style="display:flex; align-items:center; gap:16px; border-bottom:2.5px solid #1E3A5F; padding-bottom:10px; margin-bottom:16px; font-family:Arial,Helvetica,sans-serif;">
+    ${logo}
+    <div style="flex:1;">
+      <div style="font-size:18px; font-weight:700; color:#1E3A5F; letter-spacing:.02em;">${esc(s.nom)}</div>
+      ${s.activite ? `<div style="font-size:11.5px; color:#444; margin-top:1px;">${esc(s.activite)}</div>` : ''}
+      ${l1 ? `<div style="font-size:10.5px; color:#555; margin-top:3px;">${esc(l1)}</div>` : ''}
+      ${l2 ? `<div style="font-size:10.5px; color:#555;">${esc(l2)}</div>` : ''}
+    </div>
+  </div>`;
+}
+function docFooter(){
+  const s = societe || {};
+  if(!s.nom) return '';
+  const ids = [s.ice ? 'ICE : ' + s.ice : '', s.rc ? 'RC : ' + s.rc : '', s.if ? 'IF : ' + s.if : '', s.patente ? 'Patente : ' + s.patente : ''].filter(Boolean).join(' · ');
+  const addr = [s.adresse, s.ville, s.tel ? 'Tél : ' + s.tel : ''].filter(Boolean).join(' — ');
+  return `<div class="doc-footer" style="margin-top:22px; border-top:1px solid #bbb; padding-top:6px; font-family:Arial,Helvetica,sans-serif; font-size:9px; color:#666; text-align:center; line-height:1.5;">
+    <div><b>${esc(s.nom)}</b>${addr ? ' — ' + esc(addr) : ''}</div>
+    ${ids ? `<div>${esc(ids)}</div>` : ''}
+  </div>`;
+}
+// Ajoute l'en-tête société au document (le titre « HDGes — X » devient simplement « X »)
+function brandDoc(html){
+  if(!societe || !societe.nom) return html;
+  return docLetterhead()
+    + String(html).replace(/<h1>HDGes — /g, '<h1>').replace(/<h1>HDGes<\/h1>/g, '')
+    + docFooter();
+}
+function fillSocieteForm(){
+  const s = societe || {};
+  ['nom','activite','adresse','ville','tel','email','ice','rc','if','patente'].forEach(k=>{ const el = document.getElementById('soc_' + k); if(el) el.value = s[k] || ''; });
+  societeLogoDraft = s.logo || null;
+  renderSocieteLogo();
+}
+function renderSocieteLogo(){
+  const img = document.getElementById('soc_logoPreview'), rm = document.getElementById('soc_logoRemove');
+  if(societeLogoDraft){ img.src = societeLogoDraft; img.style.display = ''; rm.style.display = ''; }
+  else { img.removeAttribute('src'); img.style.display = 'none'; rm.style.display = 'none'; }
+}
+document.getElementById('soc_logoFile').addEventListener('change', function(){
+  const file = this.files && this.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const im = new Image();
+    im.onload = ()=>{
+      // Réduit le logo (max 400×160) pour qu'il reste léger dans les données
+      const k = Math.min(1, 400/im.width, 160/im.height);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(im.width*k)); c.height = Math.max(1, Math.round(im.height*k));
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      societeLogoDraft = c.toDataURL('image/png');
+      renderSocieteLogo();
+    };
+    im.onerror = ()=>showToast('Image illisible — choisis un fichier PNG ou JPG');
+    im.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  this.value = '';
+});
+document.getElementById('soc_logoRemove').addEventListener('click', ()=>{ societeLogoDraft = null; renderSocieteLogo(); });
+document.getElementById('socSaveBtn').addEventListener('click', async ()=>{
+  const v = k => document.getElementById('soc_' + k).value.trim();
+  if(!v('nom')){ showToast('Indique la raison sociale'); return; }
+  const next = { nom:v('nom'), activite:v('activite'), adresse:v('adresse'), ville:v('ville'), tel:v('tel'), email:v('email'),
+                 ice:v('ice'), rc:v('rc'), if:v('if'), patente:v('patente'), logo: societeLogoDraft || '' };
+  const prev = societe;
+  societe = next;
+  if(!(await saveSociete())){ societe = prev; showToast('⚠️ Échec de l\'enregistrement — vérifie ta connexion internet'); return; }
+  showToast('✓ Informations société enregistrées — elles apparaissent sur tous les documents');
+});
+document.getElementById('socPreviewBtn').addEventListener('click', ()=>{
+  const v = k => document.getElementById('soc_' + k).value.trim();
+  const saved = societe;
+  societe = { nom:v('nom') || 'RAISON SOCIALE', activite:v('activite'), adresse:v('adresse'), ville:v('ville'), tel:v('tel'), email:v('email'),
+              ice:v('ice'), rc:v('rc'), if:v('if'), patente:v('patente'), logo: societeLogoDraft || '' };
+  openPrintWindow('Aperçu en-tête', `<div class="print-header"><h1>HDGes — Exemple d'état</h1><div class="print-date">Aperçu de l'en-tête et du pied de page</div></div>
+    <table><thead><tr><th>Date</th><th>Pièce</th><th>Libellé</th><th>Montant</th></tr></thead><tbody><tr><td>${fmtDate(todayISO())}</td><td>BON-0001</td><td>Exemple</td><td>${fmt(1234.5)}</td></tr></tbody></table>`);
+  societe = saved;
+});
+
+// Couleurs de l'application (variables CSS) recopiées dans la fenêtre d'aperçu : sans elles,
+// les lignes de titre (texte blanc sur fond couleur) s'affichaient vides.
+function printRootVars(){
+  const cs = getComputedStyle(document.documentElement);
+  const names = ['--paper','--paper-dark','--ink','--forest','--forest-light','--tomato','--tomato-dark','--crate','--line','--white','--panel-bg','--shadow'];
+  return ':root{' + names.map(n=>{ const v = cs.getPropertyValue(n).trim(); return v ? n + ':' + v + ';' : ''; }).join('') + '}';
+}
+
 function openPrintWindow(title, contentHtml){
+  contentHtml = brandDoc(contentHtml);
   const win = window.open('', '_blank');
   if(!win){ showToast('⚠️ Le navigateur a bloqué la fenêtre — autorise les pop-ups pour ce site'); return; }
   win.document.write(`
@@ -7157,15 +7291,17 @@ function openPrintWindow(title, contentHtml){
       <meta charset="UTF-8">
       <title>${esc(title)} — prêt pour impression</title>
       <style>
+        ${printRootVars()}
         body{font-family:Arial,Helvetica,sans-serif; color:#111; margin:0; padding:24px 28px;}
-        h1{font-family:Georgia,serif; font-size:20px; margin:0 0 4px 0; color:#1F3D2B;}
+        *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+        h1{font-family:Arial,Helvetica,sans-serif; font-size:19px; margin:0 0 4px 0; color:#1E3A5F;}
         .print-date{font-size:11px; color:#666; margin-bottom:18px;}
         table{width:100%; border-collapse:collapse; font-size:12.5px;}
         th, td{border:1px solid #ccc; padding:6px 9px; text-align:left;}
         th{background:#eee;}
         .print-toolbar{margin-bottom:20px;}
         .print-toolbar button{
-          padding:10px 20px; background:#1F3D2B; color:#fff; border:none;
+          padding:10px 20px; background:#1E3A5F; color:#fff; border:none;
           border-radius:6px; font-size:13.5px; font-weight:600; cursor:pointer;
         }
         @page{ size: portrait; margin: 15mm; }
@@ -8585,7 +8721,8 @@ function buildBackupData(){
     version: 1,
     exportedAt: new Date().toISOString(),
     derniereSaisieAt: last || Date.now(),
-    bons, fournisseurs, clients, produits, stations, bankOps, bankCheques, bankCredits, clientReglements, fournisseurReglements, factures, avoirs
+    bons, fournisseurs, clients, produits, stations, bankOps, bankCheques, bankCredits, clientReglements, fournisseurReglements, factures, avoirs,
+    societe
   };
 }
 
@@ -8786,6 +8923,7 @@ document.getElementById('backupFileInput').addEventListener('change', function(e
       fournisseurReglements = Array.isArray(data.fournisseurReglements) ? data.fournisseurReglements : [];
       factures = Array.isArray(data.factures) ? data.factures : [];
       avoirs = Array.isArray(data.avoirs) ? data.avoirs : [];
+      if(data.societe && typeof data.societe === 'object'){ societe = data.societe; await saveSociete(); }
 
       await saveBons();
       await saveFournisseursList();
@@ -8906,6 +9044,7 @@ async function initApp(){
   await loadFournisseurReglements();
   await loadFactures();
   await loadAvoirs();
+  await loadSociete();
 
   // Attribue une référence aux fiches déjà existantes qui n'en ont pas encore (anciennes données)
   let frnChanged = false, cliChanged = false, prodChanged = false, stnChanged = false;
@@ -9052,6 +9191,7 @@ async function silentRefresh(){
     await loadBankCredits();
     await loadFactures();
     await loadAvoirs();
+    await loadSociete();
     await loadClientReglements();
     await loadFournisseurReglements();
   }catch(e){ return; }
@@ -9209,7 +9349,10 @@ function applyPermissions(){
     ? 'Connexion précédente : ' + fmtDateTime(currentUser.previousLoginAt)
     : 'Première connexion';
   renderDriveStatus();
-  if(driveEnabled()) driveLoadGis().catch(()=>{});   // précharge Google pour que le clic ouvre la fenêtre sans délai
+  if(driveEnabled()) driveLoadGis().catch(()=>{});
+  // Informations société (en-tête des documents) : réservé aux comptes admin
+  document.getElementById('societePanel').style.display = isAdmin ? '' : 'none';
+  if(isAdmin) fillSocieteForm();   // précharge Google pour que le clic ouvre la fenêtre sans délai
 
   if(isMainAdmin(currentUser)){
     loadUsers().then(()=>{ populateUsrSelect(); renderUsersTable(); clearUsrForm(); });
