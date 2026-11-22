@@ -668,7 +668,7 @@
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">Total achats</div><div class="stat-value" id="statAchat">0,00 DH</div></div>
         <div class="stat-card"><div class="stat-label">Total ventes</div><div class="stat-value" id="statVente">0,00 DH</div></div>
-        <div class="stat-card"><div class="stat-label">Marge nette</div><div class="stat-value" id="statMarge">0,00 DH</div></div>
+        <div class="stat-card"><div class="stat-label">Marge nette</div><div class="stat-value" id="statMarge">0,00 DH</div><div class="stat-sub" id="statMargeSub"></div></div>
         <div class="stat-card"><div class="stat-label">Impayé (fournisseurs)</div><div class="stat-value tomato" id="statImpaye">0,00 DH</div></div>
       </div>
 
@@ -729,7 +729,7 @@
           <div style="font-size:11.5px; color:#6B7C6F; margin-top:4px; line-height:1.45;">
             Aïd Al-Fitr, Aïd Al-Adha, 1er Moharram, Aïd Al-Mawlid : dates prévues, à corriger si l'annonce officielle diffère d'un jour.
             Les fêtes nationales (1er janvier, 11 et 14 janvier, 1er mai, 30 juillet, 14, 20 et 21 août, 31 octobre, 6 et 18 novembre),
-            les samedis et les dimanches sont déjà comptés automatiquement. Sert au calcul de la date d'encaissement (échéance + 3 jours ouvrés).
+            les samedis et les dimanches sont déjà comptés automatiquement. Sert au calcul de la date d'encaissement (chèque : échéance + 2 jours ouvrés ; effet : + 3 jours ouvrés).
           </div>
         </div>
         <div class="form-actions">
@@ -879,7 +879,7 @@
             <label style="font-size:12px; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="echHonores"> Afficher déjà encaissés / payés</label>
           </div>
           <div class="scroll-list" style="max-height:560px; margin-top:12px;"><table class="simple" id="rapEcheanceTable">
-            <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th><th></th></tr></thead>
+            <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th><th>Bons lettrés</th><th></th></tr></thead>
             <tbody></tbody>
           </table></div>
         </div>
@@ -1198,6 +1198,7 @@
 
           <div class="form-grid" style="grid-template-columns:1fr;">
             <div class="field"><label>Observation</label><input type="text" id="f_type" placeholder=""></div>
+            <div class="field" style="justify-content:flex-end;"><label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:12.5px; cursor:pointer;"><input type="checkbox" id="f_horsMarge" style="width:auto;"> Reliquat / report / solde de début (hors marge)</label></div>
           </div>
 
           <div class="form-actions" style="justify-content:flex-end;">
@@ -2548,6 +2549,7 @@ function clearForm(){
    'f_prixAch','f_fournisseur','f_station','f_type','f_prixVente','f_client'].forEach(id=>{
     document.getElementById(id).value='';
   });
+  document.getElementById('f_horsMarge').checked = false;
   populateProduitSelect('');
   populateVarieteSelect('');
   updateClientsDatalistForStation();
@@ -2597,6 +2599,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
     echeance: existingBon ? (existingBon.echeance||'') : '',
     station: document.getElementById('f_station').value.trim(),
     type: document.getElementById('f_type').value.trim(),
+    horsMarge: document.getElementById('f_horsMarge').checked,
     prixVente, vte: prixVente>0? net*prixVente : 0,
     mrg: (prixVente>0? net*prixVente:0) - (net*prixAch),
     client: document.getElementById('f_client').value.trim(),
@@ -3059,16 +3062,46 @@ document.getElementById('scanThumb').addEventListener('click', function(){
   w.onclick=()=>w.remove(); document.body.appendChild(w);
 });
 
+// --- Marge : uniquement le gain des vrais bons (vente − achat) ---
+// Exclus : reliquats, reports, soldes de début (case « Hors marge » sur le bon, ou mot-clé dans
+// produit / variété / observation / N° bon), et les bons sans vente ou sans achat (gain inconnu).
+const HORS_MARGE_RE = /reliquat|report|solde\s*(de\s*)?d[ée]but|solde\s*initial|[àa]\s+nouveau|ouverture/i;
+function bonHorsMarge(b){ return !!b.horsMarge || HORS_MARGE_RE.test([b.produit, b.variete, b.type, b.numBon].join(' ')); }
+function margeBon(b){
+  if(bonHorsMarge(b)) return null;
+  const v = b.vte || 0, a = b.montantDh || 0;
+  if(!(v > 0) || !(a > 0)) return null;
+  return v - a;
+}
+function margeTotale(list){
+  let total = 0, horsMarge = 0, sansPrix = 0;
+  list.forEach(b=>{
+    if(bonHorsMarge(b)){ horsMarge++; return; }
+    const m = margeBon(b);
+    if(m===null){ sansPrix++; return; }
+    total += m;
+  });
+  return { total, horsMarge, sansPrix };
+}
+function margeSousTexte(M){
+  const parts = [];
+  if(M.horsMarge) parts.push(M.horsMarge + ' reliquat(s) / report(s) exclus');
+  if(M.sansPrix) parts.push(M.sansPrix + ' bon(s) sans vente ou sans achat exclus');
+  return parts.length ? parts.join(' · ') : 'gain des bons : vente − achat';
+}
+
 // --- Dashboard ---
 function renderDashboard(){
   const totalAchat = bons.reduce((s,b)=>s+(b.montantDh||0),0);
   const totalVente = bons.reduce((s,b)=>s+(b.vte||0),0);
-  const totalMarge = bons.reduce((s,b)=>s+(b.mrg||0),0);
+  const M = margeTotale(bons);
+  const totalMarge = M.total;
   const totalImpaye = bons.filter(b=>!b.paye).reduce((s,b)=>s+(b.montantDh||0),0);
 
   document.getElementById('statAchat').textContent = fmt(totalAchat)+' DH';
   document.getElementById('statVente').textContent = fmt(totalVente)+' DH';
   document.getElementById('statMarge').textContent = fmt(totalMarge)+' DH';
+  document.getElementById('statMargeSub').textContent = margeSousTexte(M);
   document.getElementById('statImpaye').textContent = fmt(totalImpaye)+' DH';
 
   const fournMap = {};
@@ -3225,7 +3258,7 @@ const BONS_GRID_COLS = [
   { k:'client',     l:'Client',        t:'s', v:b=>b.client||'',     h:b=>esc(b.client||'—'), cls:'name' },
   { k:'prixVente',  l:'Prix vente',    t:'n', v:b=>b.prixVente||0,   h:b=> (b.prixVente||0) ? fmt(b.prixVente) : '—' },
   { k:'vte',        l:'Montant vente', t:'n', v:b=>b.vte||0,         h:b=> (b.vte||0) ? fmt(b.vte) : '—', sum:true },
-  { k:'mrg',        l:'Marge',         t:'n', v:b=>b.mrg||0,         h:b=>`<span style="color:${(b.mrg||0)>=0?'#15803D':'#B91C1C'}; font-weight:700;">${fmt(b.mrg)}</span>`, sum:true, sumColor:true },
+  { k:'mrg',        l:'Marge',         t:'n', v:b=>margeBon(b)||0,   h:b=>{ const m = margeBon(b); return m===null ? `<span style="color:#8A9A8D;" title="${bonHorsMarge(b)?'Reliquat / report / solde de début : hors marge':'Pas de prix de vente ou d\'achat : marge non comptée'}">${bonHorsMarge(b)?'hors marge':'—'}</span>` : `<span style="color:${m>=0?'#15803D':'#B91C1C'}; font-weight:700;">${fmt(m)}</span>`; }, sum:true, sumColor:true },
   { k:'type',       l:'Observation',   t:'s', v:b=>b.type||'',       h:b=>esc(b.type||'—') },
   { k:'stA',        l:'Statut achat',  t:'s', stat:'a' },
   { k:'stV',        l:'Statut vente',  t:'s', stat:'v' }
@@ -3404,6 +3437,7 @@ window.editBon = function(id){
   document.getElementById('f_station').value=b.station||'';
   updateClientsDatalistForStation();
   document.getElementById('f_type').value=b.type||'';
+  document.getElementById('f_horsMarge').checked = !!b.horsMarge;
   document.getElementById('f_prixVente').value=b.prixVente||'';
   document.getElementById('f_client').value=b.client||'';
   recompute();
@@ -3439,7 +3473,7 @@ document.getElementById('exportBtn').addEventListener('click', ()=>{
   const cell = v => { const t = (v===undefined || v===null) ? '' : String(v); return /[;"\r\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t; };
   const rows = bons.slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(b=>[
     b.ref, b.date, b.numBon, b.produit, b.variete, b.nbCaisses, num(b.poidsBrut), num(b.tare), num(b.poidsNet), num(b.moyCss), num(b.prixAch), num(b.montantDh),
-    b.fournisseur, b.station, b.type, num(b.prixVente), num(b.vte), num(b.mrg), b.client, num(b.avance)
+    b.fournisseur, b.station, b.type, num(b.prixVente), num(b.vte), (margeBon(b)===null ? "" : num(margeBon(b))), b.client, num(b.avance)
   ].map(cell).join(';'));
   const csv = '\uFEFF' + [headers.join(';'), ...rows].join('\r\n');      // BOM : Excel lit correctement les accents
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
@@ -4226,8 +4260,19 @@ function ajouterJoursOuvres(iso, n){
   }
   return d.toISOString().slice(0,10);
 }
-const DELAI_ENCAISSEMENT_JOURS = 3;
-function dateEncaissement(ech){ return ajouterJoursOuvres(ech, DELAI_ENCAISSEMENT_JOURS); }
+// Délai d'encaissement selon le mode : chèque + 2 jours ouvrés, effet (traite, LCN) + 3 jours ouvrés.
+// Autres modes (virement, espèces…) : le jour même de l'échéance.
+function delaiEncaissement(mode){
+  const m = String(mode||'');
+  if(/ch[eèé]que/i.test(m)) return 2;
+  if(/effet|traite|lcn/i.test(m)) return 3;
+  return 0;
+}
+function dateEncaissement(ech, mode){
+  const n = delaiEncaissement(mode);
+  if(!ech) return '';
+  return n ? ajouterJoursOuvres(ech, n) : ech;
+}
 
 function echeanceDays(ech){ return Math.round((Date.parse(ech) - Date.parse(todayISO())) / 86400000); }
 function echeanceDaysLabel(d){
@@ -4286,7 +4331,7 @@ function buildEcheance(opts){
     if(opts.periode==='mois' && i.ech.slice(0,7)!==monthKey) return false;
     if(opts.periode==='plage'){ if(opts.du && i.ech<opts.du) return false; if(opts.au && i.ech>opts.au) return false; }
     if(toks.length){
-      const hay = effetsNorm([i.ref,i.tiers,i.mode,i.numero,i.montant,fmt(i.montant),i.ech,fmtDate(i.ech),fmtDate(i.date),fmtDate(dateEncaissement(i.ech)),i.bonsRefs.join(' ')].join(' | '));
+      const hay = effetsNorm([i.ref,i.tiers,i.mode,i.numero,i.montant,fmt(i.montant),i.ech,fmtDate(i.ech),fmtDate(i.date),fmtDate(dateEncaissement(i.ech, i.mode)),i.bonsRefs.join(' ')].join(' | '));
       if(!toks.every(t=>hay.includes(t))) return false;
     }
     return true;
@@ -4314,7 +4359,8 @@ function echeanceRowHtml(i, withActions){
       <button class="btn${i.honore?' secondary':''}" style="padding:4px 10px; font-size:12px;" onclick="effetToggle('${i.kind}','${i.id}')">${lbl}</button>
       ${(i.kind==='client'||i.kind==='fournisseur')?`<button class="icon-btn" onclick="deleteReglementFromEcheance('${i.id}','${i.kind}')" title="Supprimer le règlement">✕</button>`:''}</td>`;
   }
-  const enc = dateEncaissement(i.ech);
+  const enc = dateEncaissement(i.ech, i.mode);
+  const delai = delaiEncaissement(i.mode);
   return `<tr${i.honore?' style="opacity:.65;"':''}>
     <td><span class="ref-badge">${esc(i.ref||'—')}</span></td>
     <td style="white-space:nowrap;">${i.date ? fmtDate(i.date) : '—'}</td>
@@ -4325,11 +4371,12 @@ function echeanceRowHtml(i, withActions){
     <td style="color:#15803D; font-weight:700; white-space:nowrap;">${i.sens>0?fmt(i.montant):''}</td>
     <td style="font-weight:700; white-space:nowrap; color:${i.honore?'#8A9A8D':effetsSoldeColor(i.run)};">${i.honore?'—':fmt(i.run)}</td>
     <td style="white-space:nowrap;"><span class="statut-badge ${i.honore?'ok':(i.days<0?'depasse':(i.days<=7?'bientot':'ok'))}">${badge.t}</span></td>
-    <td style="white-space:nowrap; font-weight:700;" title="Échéance + 3 jours ouvrés (hors week-ends et jours fériés)">${enc ? fmtDate(enc) : '—'}</td>
+    <td style="white-space:nowrap; font-weight:700;" title="${delai ? 'Échéance + ' + delai + ' jours ouvrés (hors week-ends et jours fériés)' : 'Même jour que l\'échéance'}">${enc ? fmtDate(enc) : '—'}${delai ? `<div style="font-size:11px; font-weight:400; color:#6B7C6F;">+${delai} j ouvrés</div>` : ''}</td>
+    <td style="font-size:12px;">${i.bonsRefs.length ? esc(i.bonsRefs.join(', ')) : '<span style="color:#8A9A8D;">—</span>'}</td>
     ${actions}</tr>`;
 }
 function echeanceBodyHtml(E, withActions){
-  const cols = withActions ? 11 : 10;
+  const cols = withActions ? 12 : 11;
   if(!E.groups.length) return `<tr><td colspan="${cols}" style="font-family:Inter;color:#8A9A8D; text-align:center; padding:28px 0;">Aucune échéance pour ces critères</td></tr>`;
   let html = '';
   E.groups.forEach(g=>{
@@ -6273,7 +6320,7 @@ function buildEtatEcheanceHTML(){
       <div class="print-subtitle" style="margin-top:4px;">Solde actuel banque ${esc(fmt(E.bank))} DH — À encaisser ${esc(fmt(E.totalIn))} — À payer ${esc(fmt(E.totalOut))} — Solde projeté ${esc(fmt(E.projected))} DH${E.minRun<0?' — ⚠ solde négatif jusqu\'à '+esc(fmt(E.minRun))+' DH ('+esc(fmtDate(E.minDate))+')':''}</div>
     </div>
     <table class="print-details doc-table">
-      <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th></tr></thead>
+      <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th><th>Bons lettrés</th></tr></thead>
       <tbody>${echeanceBodyHtml(E, false)}</tbody>
     </table>
   `;
@@ -6708,7 +6755,8 @@ function generateRapport(){
   const poids = filtered.reduce((s,b)=>s+(b.poidsNet||0),0);
   const montantAchat = filtered.reduce((s,b)=>s+(b.montantDh||0),0);
   const montantVente = filtered.reduce((s,b)=>s+(b.vte||0),0);
-  const marge = filtered.reduce((s,b)=>s+(b.mrg||0),0);
+  const margeInfo = margeTotale(filtered);
+  const marge = margeInfo.total;
   const impaye = filtered.filter(b=>!b.paye).reduce((s,b)=>s+(b.montantDh||0),0);
 
   const repValueType = document.getElementById('rep_valueType').value;
@@ -6737,7 +6785,7 @@ function generateRapport(){
   document.getElementById('repStatGrid').innerHTML = `
     <div class="stat-card"><div class="stat-label">Montant achat</div><div class="stat-value">${fmt(montantAchat)} DH</div></div>
     <div class="stat-card"><div class="stat-label">Montant vente</div><div class="stat-value">${fmt(montantVente)} DH</div></div>
-    <div class="stat-card"><div class="stat-label">Marge</div><div class="stat-value">${fmt(marge)} DH</div></div>
+    <div class="stat-card"><div class="stat-label">Marge</div><div class="stat-value">${fmt(marge)} DH</div><div class="stat-sub">${esc(margeSousTexte(margeInfo))}</div></div>
     <div class="stat-card"><div class="stat-label">Impayé fournisseur</div><div class="stat-value tomato">${fmt(impaye)} DH</div></div>
     <div class="stat-card"><div class="stat-label">Payé</div><div class="stat-value" style="color:#15803D;">${fmt(payeValue)} DH</div></div>
     <div class="stat-card"><div class="stat-label">Impayé</div><div class="stat-value" style="color:#B91C1C;">${fmt(impayeValue)} DH</div></div>
@@ -6763,7 +6811,7 @@ document.getElementById('repResetBtn').addEventListener('click', ()=>{
 document.getElementById('repExportBtn').addEventListener('click', ()=>{
   if(!lastReportFiltered.length){ showToast('Génère d\'abord un état avant d\'exporter'); return; }
   const headers = ['Date','N Bon','Produit','Variete','Nb Caisses','Poids Brut','Tare','Poids Net','Moy Css','Prix Ach','Montant DH','Fournisseur','Paye','Solde','Station','Type','Prix Vente','Vte','Marge','Client','Avance'];
-  const rows = lastReportFiltered.map(b=>[b.date,b.numBon,b.produit,b.variete,b.nbCaisses,b.poidsBrut,b.tare,b.poidsNet,(b.moyCss||0).toFixed(2),b.prixAch,(b.montantDh||0).toFixed(2),b.fournisseur,b.paye?'OUI':'NON',b.solde?'OUI':'NON',b.station,b.type,b.prixVente,(b.vte||0).toFixed(2),(b.mrg||0).toFixed(2),b.client,b.avance]);
+  const rows = lastReportFiltered.map(b=>[b.date,b.numBon,b.produit,b.variete,b.nbCaisses,b.poidsBrut,b.tare,b.poidsNet,(b.moyCss||0).toFixed(2),b.prixAch,(b.montantDh||0).toFixed(2),b.fournisseur,b.paye?'OUI':'NON',b.solde?'OUI':'NON',b.station,b.type,b.prixVente,(b.vte||0).toFixed(2),(margeBon(b)===null?"":margeBon(b).toFixed(2)),b.client,b.avance]);
   const csv = [headers.join(';'), ...rows.map(r=>r.join(';'))].join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
