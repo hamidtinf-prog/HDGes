@@ -80,8 +80,10 @@ Elle apparaît comme une **ligne de règlement datée**, avec son propre montant
 ### 4.2 État Échéance
 Liste les règlements (clients et fournisseurs) et les opérations bancaires avec échéance, groupés par urgence (en retard, aujourd'hui, 7 jours, 30 jours, plus tard).
 
-- Colonnes : `Réf règl. | Date | Date échéance | Client / Fournisseur | N° pièce | À payer | À encaisser | Solde projeté | Statut | Date d'encaissement | Bons lettrés`.
-- **Date d'encaissement** = date d'échéance + jours **ouvrés** selon le mode : **chèque + 2**, **effet (traite, LCN) + 3**, autres modes (virement, espèces) le jour même. On saute les samedis, dimanches et jours fériés.
+- Colonnes : `Réf règl. | Date | N° pièce | Date échéance | Client / Fournisseur | À payer | À encaisser | Solde projeté | Date d'encaissement | Statut | Bons lettrés`.
+- **Date d'encaissement** :
+  - **client** (argent qui rentre) = date d'échéance + jours **ouvrés** selon le mode : **chèque + 2**, **effet (traite, LCN) + 3**, autres modes le jour même ; on saute les samedis, dimanches et jours fériés ;
+  - **fournisseur** (argent qui sort) = **le jour même** de l'échéance.
   - Fêtes nationales comptées automatiquement : 1er janvier, 11 et 14 janvier, 1er mai, 30 juillet, 14, 20 et 21 août, 31 octobre, 6 et 18 novembre.
   - Fêtes religieuses (Aïd Al-Fitr, Aïd Al-Adha, 1er Moharram, Aïd Al-Mawlid) : dates prévues, modifiables dans **Tableau de bord → Informations société → Jours fériés religieux**.
 - **Solde projeté** = solde actuel de la banque + encaissements − paiements, cumulé dans l'ordre des échéances.

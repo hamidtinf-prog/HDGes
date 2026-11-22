@@ -78,7 +78,7 @@
   .nav-subitem.active{background:rgba(255,255,255,0.14); color:var(--white); font-weight:600;}
 
   /* Main */
-  .main{flex:1; padding:32px 40px; max-width:1180px;}
+  .main{flex:1; min-width:0; padding:24px 28px;}   /* toute la largeur de l'écran : les lignes des tableaux restent visibles */
   .main.wide-mode{max-width:none;}
   .page-title{
     font-family:'Space Grotesk',sans-serif;
@@ -87,20 +87,29 @@
   .page-sub{color:#6B7C6F; font-size:13.5px; margin-bottom:26px;}
 
   /* Dashboard cards */
-  .stat-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:28px;}
+  /* Cadres de totaux (tableau de bord, rapports, banque…) : taille moyenne, alignés sur une ligne
+     tant que la largeur le permet, avec une marge régulière autour */
+  .stat-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; margin:4px 0 20px;}
   .stat-card{
-    background:var(--white); border:1px solid var(--line); border-radius:12px;
-    padding:16px 18px; box-shadow:var(--shadow);
+    background:var(--white); border:1px solid var(--line); border-radius:10px;
+    padding:10px 14px; box-shadow:var(--shadow); min-width:0;
   }
-  .stat-label{font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:#8A9A8D; font-weight:600; margin-bottom:8px;}
-  .stat-value{font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600; color:var(--forest);}
+  .stat-label{font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:#8A9A8D; font-weight:600; margin-bottom:4px; line-height:1.3;}
+  .stat-value{font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:600; color:var(--forest); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .stat-value.tomato{color:var(--tomato-dark);}
+  .stat-sub{font-size:10.5px; color:#6B7C6F; margin-top:3px; line-height:1.35;}
 
-  /* Totaux du Rapport (6 cartes) : plus petits pour tenir sur une seule ligne */
-  #repStatGrid{grid-template-columns:repeat(6,1fr); gap:8px;}
-  #repStatGrid .stat-card{padding:9px 10px;}
-  #repStatGrid .stat-label{font-size:9px; margin-bottom:3px; letter-spacing:0.03em;}
-  #repStatGrid .stat-value{font-size:13px;}
+  /* Rapport (détail) : dates et montants sur une seule ligne */
+  #repDetailTable td{white-space:nowrap;}
+  #repDetailTable td.name{white-space:normal;}
+
+  /* État Échéance : tableau resserré pour que toute la ligne tienne à l'écran */
+  #rapEcheanceTable{font-size:12px;}
+  #rapEcheanceTable th{font-size:9.5px; padding:8px 6px; letter-spacing:0.03em;}
+  #rapEcheanceTable td{padding:7px 6px;}
+  #rapEcheanceTable td.name{min-width:130px; word-break:normal; overflow-wrap:normal; hyphens:none;}
+  #rapEcheanceTable .ref-badge{font-size:10px; padding:2px 6px;}
+  #rapEcheanceTable td .btn{padding:4px 8px !important; font-size:11px !important;}
 
   .panel{
     background:var(--panel-bg); border:1px solid #C7E0F5; border-radius:12px;
@@ -382,8 +391,7 @@
     .form-actions button{flex:1; min-width:120px;}
 
     .stat-grid{grid-template-columns:1fr 1fr; gap:8px;}
-    #repStatGrid{grid-template-columns:repeat(3,1fr);}
-    .stat-value{font-size:17px;}
+    .stat-value{font-size:15px;}
     .mini-stats{grid-template-columns:1fr 1fr;}
 
     /* Tableaux : défilement horizontal au lieu de casser la mise en page */
@@ -729,7 +737,7 @@
           <div style="font-size:11.5px; color:#6B7C6F; margin-top:4px; line-height:1.45;">
             Aïd Al-Fitr, Aïd Al-Adha, 1er Moharram, Aïd Al-Mawlid : dates prévues, à corriger si l'annonce officielle diffère d'un jour.
             Les fêtes nationales (1er janvier, 11 et 14 janvier, 1er mai, 30 juillet, 14, 20 et 21 août, 31 octobre, 6 et 18 novembre),
-            les samedis et les dimanches sont déjà comptés automatiquement. Sert au calcul de la date d'encaissement (chèque : échéance + 2 jours ouvrés ; effet : + 3 jours ouvrés).
+            les samedis et les dimanches sont déjà comptés automatiquement. Sert au calcul de la date d'encaissement des clients (chèque : échéance + 2 jours ouvrés ; effet : + 3 jours ouvrés ; fournisseurs : le jour même).
           </div>
         </div>
         <div class="form-actions">
@@ -879,7 +887,7 @@
             <label style="font-size:12px; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="echHonores"> Afficher déjà encaissés / payés</label>
           </div>
           <div class="scroll-list" style="max-height:560px; margin-top:12px;"><table class="simple" id="rapEcheanceTable">
-            <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th><th>Bons lettrés</th><th></th></tr></thead>
+            <thead><tr><th>Réf règl.</th><th>Date</th><th>N° pièce</th><th>Date échéance</th><th>Client / Fournisseur</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Date d'encaissement</th><th>Statut</th><th>Bons lettrés</th><th></th></tr></thead>
             <tbody></tbody>
           </table></div>
         </div>
@@ -4260,16 +4268,17 @@ function ajouterJoursOuvres(iso, n){
   }
   return d.toISOString().slice(0,10);
 }
-// Délai d'encaissement selon le mode : chèque + 2 jours ouvrés, effet (traite, LCN) + 3 jours ouvrés.
-// Autres modes (virement, espèces…) : le jour même de l'échéance.
-function delaiEncaissement(mode){
+// Délai d'encaissement (argent qui RENTRE, ex. client) : chèque + 2 jours ouvrés, effet (traite, LCN) + 3.
+// Argent qui SORT (fournisseur) et autres modes (virement, espèces…) : le jour même de l'échéance.
+function delaiEncaissement(mode, sens){
+  if(sens !== undefined && sens < 0) return 0;
   const m = String(mode||'');
   if(/ch[eèé]que/i.test(m)) return 2;
   if(/effet|traite|lcn/i.test(m)) return 3;
   return 0;
 }
-function dateEncaissement(ech, mode){
-  const n = delaiEncaissement(mode);
+function dateEncaissement(ech, mode, sens){
+  const n = delaiEncaissement(mode, sens);
   if(!ech) return '';
   return n ? ajouterJoursOuvres(ech, n) : ech;
 }
@@ -4331,7 +4340,7 @@ function buildEcheance(opts){
     if(opts.periode==='mois' && i.ech.slice(0,7)!==monthKey) return false;
     if(opts.periode==='plage'){ if(opts.du && i.ech<opts.du) return false; if(opts.au && i.ech>opts.au) return false; }
     if(toks.length){
-      const hay = effetsNorm([i.ref,i.tiers,i.mode,i.numero,i.montant,fmt(i.montant),i.ech,fmtDate(i.ech),fmtDate(i.date),fmtDate(dateEncaissement(i.ech, i.mode)),i.bonsRefs.join(' ')].join(' | '));
+      const hay = effetsNorm([i.ref,i.tiers,i.mode,i.numero,i.montant,fmt(i.montant),i.ech,fmtDate(i.ech),fmtDate(i.date),fmtDate(dateEncaissement(i.ech, i.mode, i.sens)),i.bonsRefs.join(' ')].join(' | '));
       if(!toks.every(t=>hay.includes(t))) return false;
     }
     return true;
@@ -4351,7 +4360,7 @@ function echeanceRowHtml(i, withActions){
     (i.days<0 ? { t:'En retard', c:'#B91C1C' } : (i.days<=7 ? { t:'À échéance', c:'#A6741A' } : { t:'En cours', c:'#2E6DA4' }));
   const dayTxt = i.honore ? '' : `<div style="font-size:11px; font-weight:700; color:${badge.c};">${echeanceDaysLabel(i.days)}</div>`;
   const PILL = { client:['CLIENT','#15803D','#E6F4EA'], fournisseur:['FOURNISSEUR','#B91C1C','#FBE8E8'], cheque:['CHÈQUE BANQUE','#2E6DA4','#E8F1FA'], credit:['CRÉDIT','#2E6DA4','#E8F1FA'], banque:['OPÉRATION BANQUE','#2E6DA4','#E8F1FA'] }[i.kind];
-  const pill = `<span style="white-space:nowrap; font-size:10px; font-weight:700; color:${PILL[1]}; background:${PILL[2]}; border-radius:10px; padding:1px 7px; margin-left:6px;">${PILL[0]}</span>`;
+  const pill = `<br><span style="white-space:nowrap; font-size:9.5px; font-weight:700; color:${PILL[1]}; background:${PILL[2]}; border-radius:10px; padding:1px 7px;">${PILL[0]}</span>`;
   let actions = '';
   if(withActions){
     const lbl = i.honore ? 'Annuler' : (i.sens>0 ? 'Encaisser' : 'Payer');
@@ -4359,19 +4368,19 @@ function echeanceRowHtml(i, withActions){
       <button class="btn${i.honore?' secondary':''}" style="padding:4px 10px; font-size:12px;" onclick="effetToggle('${i.kind}','${i.id}')">${lbl}</button>
       ${(i.kind==='client'||i.kind==='fournisseur')?`<button class="icon-btn" onclick="deleteReglementFromEcheance('${i.id}','${i.kind}')" title="Supprimer le règlement">✕</button>`:''}</td>`;
   }
-  const enc = dateEncaissement(i.ech, i.mode);
-  const delai = delaiEncaissement(i.mode);
+  const enc = dateEncaissement(i.ech, i.mode, i.sens);
+  const delai = delaiEncaissement(i.mode, i.sens);
   return `<tr${i.honore?' style="opacity:.65;"':''}>
     <td><span class="ref-badge">${esc(i.ref||'—')}</span></td>
     <td style="white-space:nowrap;">${i.date ? fmtDate(i.date) : '—'}</td>
+    <td style="white-space:nowrap;">${i.numero ? esc(i.numero) : '—'}${i.mode ? `<div style="font-size:11px; color:#6B7C6F;">${esc(i.mode)}</div>` : ''}</td>
     <td style="white-space:nowrap;"><div style="font-weight:700;">${fmtDate(i.ech)}</div>${dayTxt}</td>
     <td class="name">${esc(i.tiers)}${pill}</td>
-    <td style="white-space:nowrap;">${i.numero ? esc(i.numero) : '—'}${i.mode ? `<div style="font-size:11px; color:#6B7C6F;">${esc(i.mode)}</div>` : ''}</td>
     <td style="color:#B91C1C; font-weight:700; white-space:nowrap;">${i.sens<0?fmt(i.montant):''}</td>
     <td style="color:#15803D; font-weight:700; white-space:nowrap;">${i.sens>0?fmt(i.montant):''}</td>
     <td style="font-weight:700; white-space:nowrap; color:${i.honore?'#8A9A8D':effetsSoldeColor(i.run)};">${i.honore?'—':fmt(i.run)}</td>
-    <td style="white-space:nowrap;"><span class="statut-badge ${i.honore?'ok':(i.days<0?'depasse':(i.days<=7?'bientot':'ok'))}">${badge.t}</span></td>
     <td style="white-space:nowrap; font-weight:700;" title="${delai ? 'Échéance + ' + delai + ' jours ouvrés (hors week-ends et jours fériés)' : 'Même jour que l\'échéance'}">${enc ? fmtDate(enc) : '—'}${delai ? `<div style="font-size:11px; font-weight:400; color:#6B7C6F;">+${delai} j ouvrés</div>` : ''}</td>
+    <td style="white-space:nowrap;"><span class="statut-badge ${i.honore?'ok':(i.days<0?'depasse':(i.days<=7?'bientot':'ok'))}">${badge.t}</span></td>
     <td style="font-size:12px;">${i.bonsRefs.length ? esc(i.bonsRefs.join(', ')) : '<span style="color:#8A9A8D;">—</span>'}</td>
     ${actions}</tr>`;
 }
@@ -6320,7 +6329,7 @@ function buildEtatEcheanceHTML(){
       <div class="print-subtitle" style="margin-top:4px;">Solde actuel banque ${esc(fmt(E.bank))} DH — À encaisser ${esc(fmt(E.totalIn))} — À payer ${esc(fmt(E.totalOut))} — Solde projeté ${esc(fmt(E.projected))} DH${E.minRun<0?' — ⚠ solde négatif jusqu\'à '+esc(fmt(E.minRun))+' DH ('+esc(fmtDate(E.minDate))+')':''}</div>
     </div>
     <table class="print-details doc-table">
-      <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th><th>Bons lettrés</th></tr></thead>
+      <thead><tr><th>Réf règl.</th><th>Date</th><th>N° pièce</th><th>Date échéance</th><th>Client / Fournisseur</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Date d'encaissement</th><th>Statut</th><th>Bons lettrés</th></tr></thead>
       <tbody>${echeanceBodyHtml(E, false)}</tbody>
     </table>
   `;
