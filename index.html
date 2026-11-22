@@ -723,6 +723,15 @@
             <button type="button" class="btn secondary" id="soc_logoRemove" style="display:none;">Retirer le logo</button>
           </div>
         </div>
+        <div class="field" style="margin-top:12px;">
+          <label>Jours fériés religieux (un par ligne, JJ/MM/AAAA)</label>
+          <textarea id="soc_feries" rows="5" style="width:100%; font-family:'IBM Plex Mono',monospace; font-size:12.5px;"></textarea>
+          <div style="font-size:11.5px; color:#6B7C6F; margin-top:4px; line-height:1.45;">
+            Aïd Al-Fitr, Aïd Al-Adha, 1er Moharram, Aïd Al-Mawlid : dates prévues, à corriger si l'annonce officielle diffère d'un jour.
+            Les fêtes nationales (1er janvier, 11 et 14 janvier, 1er mai, 30 juillet, 14, 20 et 21 août, 31 octobre, 6 et 18 novembre),
+            les samedis et les dimanches sont déjà comptés automatiquement. Sert au calcul de la date d'encaissement (échéance + 3 jours ouvrés).
+          </div>
+        </div>
         <div class="form-actions">
           <button class="btn" id="socSaveBtn">Enregistrer</button>
           <button class="btn secondary" id="socPreviewBtn">Aperçu de l'en-tête</button>
@@ -870,7 +879,7 @@
             <label style="font-size:12px; display:flex; align-items:center; gap:6px;"><input type="checkbox" id="echHonores"> Afficher déjà encaissés / payés</label>
           </div>
           <div class="scroll-list" style="max-height:560px; margin-top:12px;"><table class="simple" id="rapEcheanceTable">
-            <thead><tr><th>Échéance</th><th>Tiers</th><th>Mode · N°</th><th>Réf</th><th>À encaisser</th><th>À payer</th><th>Solde projeté</th><th>Statut</th><th>Bons lettrés</th><th></th></tr></thead>
+            <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th><th></th></tr></thead>
             <tbody></tbody>
           </table></div>
         </div>
@@ -4182,6 +4191,44 @@ const ECH_GROUPS = [
   { key:'plus',    label:'⏳ Plus tard',             color:'#4B5B50', bg:'#EEF2EE' },
   { key:'honore',  label:'✔ Déjà encaissés / payés', color:'#15803D', bg:'#E6F4EA' }
 ];
+// --- Jours ouvrés (Maroc) : date d'encaissement = date d'échéance + 3 jours ouvrés ---
+// On saute les samedis, dimanches et jours fériés.
+// Fêtes nationales (date fixe chaque année) :
+const JOURS_FERIES_FIXES = {
+  '01-01':'Nouvel an', '01-11':'Manifeste de l\'indépendance', '01-14':'Nouvel an amazigh', '05-01':'Fête du travail',
+  '07-30':'Fête du Trône', '08-14':'Allégeance Oued Eddahab', '08-20':'Révolution du Roi et du Peuple',
+  '08-21':'Fête de la jeunesse', '10-31':'Fête de l\'Unité', '11-06':'Marche verte', '11-18':'Fête de l\'indépendance'
+};
+// Fêtes religieuses : dates PRÉVUES (calendrier lunaire, peuvent bouger d'un jour) — modifiables par l'admin
+// dans « Informations société » (Tableau de bord).
+const JOURS_FERIES_RELIGIEUX_DEFAUT = [
+  '2026-03-20','2026-03-21','2026-05-27','2026-05-28','2026-06-17','2026-08-26','2026-08-27',
+  '2027-03-10','2027-03-11','2027-05-17','2027-05-18','2027-06-07','2027-08-16','2027-08-17',
+  '2028-02-27','2028-02-28','2028-05-05','2028-05-06','2028-05-26','2028-08-04','2028-08-05'
+];
+function joursFeriesReligieux(){
+  return (societe && Array.isArray(societe.joursFeries)) ? societe.joursFeries : JOURS_FERIES_RELIGIEUX_DEFAUT;
+}
+function estJourFerie(iso){
+  return !!JOURS_FERIES_FIXES[iso.slice(5)] || joursFeriesReligieux().includes(iso);
+}
+function estJourOuvre(iso){
+  const wd = new Date(iso + 'T12:00:00Z').getUTCDay();   // 0 = dimanche, 6 = samedi
+  return wd !== 0 && wd !== 6 && !estJourFerie(iso);
+}
+function ajouterJoursOuvres(iso, n){
+  if(!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  const d = new Date(iso + 'T12:00:00Z');
+  let added = 0, guard = 0;
+  while(added < n && guard++ < 60){
+    d.setUTCDate(d.getUTCDate() + 1);
+    if(estJourOuvre(d.toISOString().slice(0,10))) added++;
+  }
+  return d.toISOString().slice(0,10);
+}
+const DELAI_ENCAISSEMENT_JOURS = 3;
+function dateEncaissement(ech){ return ajouterJoursOuvres(ech, DELAI_ENCAISSEMENT_JOURS); }
+
 function echeanceDays(ech){ return Math.round((Date.parse(ech) - Date.parse(todayISO())) / 86400000); }
 function echeanceDaysLabel(d){
   if(d<0) return (-d)+' j de retard';
@@ -4239,7 +4286,7 @@ function buildEcheance(opts){
     if(opts.periode==='mois' && i.ech.slice(0,7)!==monthKey) return false;
     if(opts.periode==='plage'){ if(opts.du && i.ech<opts.du) return false; if(opts.au && i.ech>opts.au) return false; }
     if(toks.length){
-      const hay = effetsNorm([i.ref,i.tiers,i.mode,i.numero,i.montant,fmt(i.montant),i.ech,fmtDate(i.ech),fmtDate(i.date),i.bonsRefs.join(' ')].join(' | '));
+      const hay = effetsNorm([i.ref,i.tiers,i.mode,i.numero,i.montant,fmt(i.montant),i.ech,fmtDate(i.ech),fmtDate(i.date),fmtDate(dateEncaissement(i.ech)),i.bonsRefs.join(' ')].join(' | '));
       if(!toks.every(t=>hay.includes(t))) return false;
     }
     return true;
@@ -4259,7 +4306,7 @@ function echeanceRowHtml(i, withActions){
     (i.days<0 ? { t:'En retard', c:'#B91C1C' } : (i.days<=7 ? { t:'À échéance', c:'#A6741A' } : { t:'En cours', c:'#2E6DA4' }));
   const dayTxt = i.honore ? '' : `<div style="font-size:11px; font-weight:700; color:${badge.c};">${echeanceDaysLabel(i.days)}</div>`;
   const PILL = { client:['CLIENT','#15803D','#E6F4EA'], fournisseur:['FOURNISSEUR','#B91C1C','#FBE8E8'], cheque:['CHÈQUE BANQUE','#2E6DA4','#E8F1FA'], credit:['CRÉDIT','#2E6DA4','#E8F1FA'], banque:['OPÉRATION BANQUE','#2E6DA4','#E8F1FA'] }[i.kind];
-  const pill = `<span style="font-size:10px; font-weight:700; color:${PILL[1]}; background:${PILL[2]}; border-radius:10px; padding:1px 7px; margin-left:6px;">${PILL[0]}</span>`;
+  const pill = `<span style="white-space:nowrap; font-size:10px; font-weight:700; color:${PILL[1]}; background:${PILL[2]}; border-radius:10px; padding:1px 7px; margin-left:6px;">${PILL[0]}</span>`;
   let actions = '';
   if(withActions){
     const lbl = i.honore ? 'Annuler' : (i.sens>0 ? 'Encaisser' : 'Payer');
@@ -4267,34 +4314,36 @@ function echeanceRowHtml(i, withActions){
       <button class="btn${i.honore?' secondary':''}" style="padding:4px 10px; font-size:12px;" onclick="effetToggle('${i.kind}','${i.id}')">${lbl}</button>
       ${(i.kind==='client'||i.kind==='fournisseur')?`<button class="icon-btn" onclick="deleteReglementFromEcheance('${i.id}','${i.kind}')" title="Supprimer le règlement">✕</button>`:''}</td>`;
   }
+  const enc = dateEncaissement(i.ech);
   return `<tr${i.honore?' style="opacity:.65;"':''}>
-    <td><div style="font-weight:700;">${fmtDate(i.ech)}</div>${dayTxt}</td>
-    <td class="name">${esc(i.tiers)}${pill}</td>
-    <td>${esc(i.mode||'—')}${i.numero?' · '+esc(i.numero):''}</td>
     <td><span class="ref-badge">${esc(i.ref||'—')}</span></td>
-    <td style="color:#15803D; font-weight:700;">${i.sens>0?fmt(i.montant):''}</td>
-    <td style="color:#B91C1C; font-weight:700;">${i.sens<0?fmt(i.montant):''}</td>
-    <td style="font-weight:700; color:${i.honore?'#8A9A8D':effetsSoldeColor(i.run)};">${i.honore?'—':fmt(i.run)}</td>
-    <td><span class="statut-badge ${i.honore?'ok':(i.days<0?'depasse':(i.days<=7?'bientot':'ok'))}">${badge.t}</span></td>
-    <td style="font-size:12px;">${i.bonsRefs.length ? esc(i.bonsRefs.join(', ')) : '<span style="color:#8A9A8D;">—</span>'}</td>
+    <td style="white-space:nowrap;">${i.date ? fmtDate(i.date) : '—'}</td>
+    <td style="white-space:nowrap;"><div style="font-weight:700;">${fmtDate(i.ech)}</div>${dayTxt}</td>
+    <td class="name">${esc(i.tiers)}${pill}</td>
+    <td style="white-space:nowrap;">${i.numero ? esc(i.numero) : '—'}${i.mode ? `<div style="font-size:11px; color:#6B7C6F;">${esc(i.mode)}</div>` : ''}</td>
+    <td style="color:#B91C1C; font-weight:700; white-space:nowrap;">${i.sens<0?fmt(i.montant):''}</td>
+    <td style="color:#15803D; font-weight:700; white-space:nowrap;">${i.sens>0?fmt(i.montant):''}</td>
+    <td style="font-weight:700; white-space:nowrap; color:${i.honore?'#8A9A8D':effetsSoldeColor(i.run)};">${i.honore?'—':fmt(i.run)}</td>
+    <td style="white-space:nowrap;"><span class="statut-badge ${i.honore?'ok':(i.days<0?'depasse':(i.days<=7?'bientot':'ok'))}">${badge.t}</span></td>
+    <td style="white-space:nowrap; font-weight:700;" title="Échéance + 3 jours ouvrés (hors week-ends et jours fériés)">${enc ? fmtDate(enc) : '—'}</td>
     ${actions}</tr>`;
 }
 function echeanceBodyHtml(E, withActions){
-  const cols = withActions ? 10 : 9;
+  const cols = withActions ? 11 : 10;
   if(!E.groups.length) return `<tr><td colspan="${cols}" style="font-family:Inter;color:#8A9A8D; text-align:center; padding:28px 0;">Aucune échéance pour ces critères</td></tr>`;
   let html = '';
   E.groups.forEach(g=>{
     // en-tête de groupe : sous-totaux alignés sur les colonnes « À encaisser » / « À payer »
-    html += `<tr><td colspan="4" style="background:${g.bg}; color:${g.color}; font-weight:700; padding:8px 10px;">${g.label} <span style="font-weight:400;">(${g.rows.length})</span></td>
-      <td style="background:${g.bg}; color:#15803D; font-weight:700;">${g.in?fmt(g.in):''}</td>
-      <td style="background:${g.bg}; color:#B91C1C; font-weight:700;">${g.out?fmt(g.out):''}</td>
-      <td colspan="${cols - 6}" style="background:${g.bg};"></td></tr>`;
+    html += `<tr><td colspan="5" style="background:${g.bg}; color:${g.color}; font-weight:700; padding:8px 10px;">${g.label} <span style="font-weight:400;">(${g.rows.length})</span></td>
+      <td style="background:${g.bg}; color:#B91C1C; font-weight:700; white-space:nowrap;">${g.out?fmt(g.out):''}</td>
+      <td style="background:${g.bg}; color:#15803D; font-weight:700; white-space:nowrap;">${g.in?fmt(g.in):''}</td>
+      <td colspan="${cols - 7}" style="background:${g.bg};"></td></tr>`;
     html += g.rows.map(i=>echeanceRowHtml(i, withActions)).join('');
   });
   const net = E.totalIn - E.totalOut;
-  html += `<tr style="background:#B9D3EC; font-weight:700;"><td colspan="4" style="text-align:right;">TOTAL À ÉCHÉANCE (hors déjà réglés)</td>
-    <td style="color:#15803D;">${fmt(E.totalIn)}</td><td style="color:#B91C1C;">${fmt(E.totalOut)}</td>
-    <td colspan="${cols - 6}" style="color:${net<0?'#B91C1C':'#15803D'};">Net : ${fmt(net)}</td></tr>`;
+  html += `<tr style="background:#B9D3EC; font-weight:700;"><td colspan="5" style="text-align:right;">TOTAL À ÉCHÉANCE (hors déjà réglés)</td>
+    <td style="color:#B91C1C; white-space:nowrap;">${fmt(E.totalOut)}</td><td style="color:#15803D; white-space:nowrap;">${fmt(E.totalIn)}</td>
+    <td colspan="${cols - 7}" style="white-space:nowrap; color:${net<0?'#B91C1C':'#15803D'};">Net : ${fmt(net)}</td></tr>`;
   return html;
 }
 // Courbe du solde projeté (un point par échéance, dans l'ordre des dates) ; la ligne rouge = zéro
@@ -6224,7 +6273,7 @@ function buildEtatEcheanceHTML(){
       <div class="print-subtitle" style="margin-top:4px;">Solde actuel banque ${esc(fmt(E.bank))} DH — À encaisser ${esc(fmt(E.totalIn))} — À payer ${esc(fmt(E.totalOut))} — Solde projeté ${esc(fmt(E.projected))} DH${E.minRun<0?' — ⚠ solde négatif jusqu\'à '+esc(fmt(E.minRun))+' DH ('+esc(fmtDate(E.minDate))+')':''}</div>
     </div>
     <table class="print-details doc-table">
-      <thead><tr><th>Échéance</th><th>Tiers</th><th>Mode · N°</th><th>Réf</th><th>À encaisser</th><th>À payer</th><th>Solde projeté</th><th>Statut</th><th>Bons lettrés</th></tr></thead>
+      <thead><tr><th>Réf règl.</th><th>Date</th><th>Date échéance</th><th>Client / Fournisseur</th><th>N° pièce</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Statut</th><th>Date d'encaissement</th></tr></thead>
       <tbody>${echeanceBodyHtml(E, false)}</tbody>
     </table>
   `;
@@ -7226,6 +7275,7 @@ function fillSocieteForm(){
   ['nom','activite','adresse','ville','tel','email','ice','rc','if','patente'].forEach(k=>{ const el = document.getElementById('soc_' + k); if(el) el.value = s[k] || ''; });
   societeLogoDraft = s.logo || null;
   renderSocieteLogo();
+  document.getElementById('soc_feries').value = joursFeriesReligieux().slice().sort().map(fmtDate).join('\n');
 }
 function renderSocieteLogo(){
   const img = document.getElementById('soc_logoPreview'), rm = document.getElementById('soc_logoRemove');
@@ -7257,8 +7307,18 @@ document.getElementById('soc_logoRemove').addEventListener('click', ()=>{ societ
 document.getElementById('socSaveBtn').addEventListener('click', async ()=>{
   const v = k => document.getElementById('soc_' + k).value.trim();
   if(!v('nom')){ showToast('Indique la raison sociale'); return; }
+  // Jours fériés : JJ/MM/AAAA (ou AAAA-MM-JJ), un par ligne
+  const feries = [], bad = [];
+  document.getElementById('soc_feries').value.split(/[\n,;]+/).map(s=>s.trim()).filter(Boolean).forEach(s=>{
+    let m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/), iso = '';
+    if(m) iso = m[3] + '-' + m[2].padStart(2,'0') + '-' + m[1].padStart(2,'0');
+    else if(/^\d{4}-\d{2}-\d{2}$/.test(s)) iso = s;
+    if(iso && !isNaN(Date.parse(iso + 'T12:00:00Z'))) feries.push(iso); else bad.push(s);
+  });
+  if(bad.length){ showToast('Date de jour férié non reconnue : ' + bad.join(', ') + ' (format JJ/MM/AAAA)'); return; }
   const next = { nom:v('nom'), activite:v('activite'), adresse:v('adresse'), ville:v('ville'), tel:v('tel'), email:v('email'),
-                 ice:v('ice'), rc:v('rc'), if:v('if'), patente:v('patente'), logo: societeLogoDraft || '' };
+                 ice:v('ice'), rc:v('rc'), if:v('if'), patente:v('patente'), logo: societeLogoDraft || '',
+                 joursFeries: Array.from(new Set(feries)).sort() };
   const prev = societe;
   societe = next;
   if(!(await saveSociete())){ societe = prev; showToast('⚠️ Échec de l\'enregistrement — vérifie ta connexion internet'); return; }
