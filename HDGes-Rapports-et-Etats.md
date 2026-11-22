@@ -80,8 +80,8 @@ Elle apparaît comme une **ligne de règlement datée**, avec son propre montant
 ### 4.2 État Échéance
 Liste les règlements (clients et fournisseurs) et les opérations bancaires avec échéance, groupés par urgence (en retard, aujourd'hui, 7 jours, 30 jours, plus tard).
 
-- Colonnes : `Réf règl. | Date | Date échéance | Client / Fournisseur | N° pièce | À payer | À encaisser | Solde projeté | Statut | Date d'encaissement`.
-- **Date d'encaissement** = date d'échéance **+ 3 jours ouvrés** : on saute les samedis, dimanches et jours fériés.
+- Colonnes : `Réf règl. | Date | Date échéance | Client / Fournisseur | N° pièce | À payer | À encaisser | Solde projeté | Statut | Date d'encaissement | Bons lettrés`.
+- **Date d'encaissement** = date d'échéance + jours **ouvrés** selon le mode : **chèque + 2**, **effet (traite, LCN) + 3**, autres modes (virement, espèces) le jour même. On saute les samedis, dimanches et jours fériés.
   - Fêtes nationales comptées automatiquement : 1er janvier, 11 et 14 janvier, 1er mai, 30 juillet, 14, 20 et 21 août, 31 octobre, 6 et 18 novembre.
   - Fêtes religieuses (Aïd Al-Fitr, Aïd Al-Adha, 1er Moharram, Aïd Al-Mawlid) : dates prévues, modifiables dans **Tableau de bord → Informations société → Jours fériés religieux**.
 - **Solde projeté** = solde actuel de la banque + encaissements − paiements, cumulé dans l'ordre des échéances.
@@ -147,7 +147,15 @@ Exemple de **Situation actuelle** : solde bancaire 50 000 DH, dette fournisseurs
 
 ---
 
-## 6. Points d'attention
+## 6. Marge
+
+**Marge = gain des bons = Σ (vente − achat)**, uniquement sur les vrais bons :
+- exclus : **reliquats, reports, soldes de début** (case « Reliquat / report / solde de début (hors marge) » sur le bon, ou mot-clé *reliquat*, *report*, *solde de début*, *solde initial*, *à nouveau*, *ouverture* dans le produit, la variété, l'observation ou le N° de bon) ;
+- exclus : les bons sans prix de vente ou sans prix d'achat (gain inconnu).
+
+Le Tableau de bord et le Rapport indiquent sous la marge combien de bons ont été exclus.
+
+## 7. Points d'attention
 
 - Le lettrage est **manuel** : un règlement non lié à un bon est traité comme avance, même si des bons restent impayés.
 - Les bons sans montant à régler (montant nul) sont ignorés dans les états de règlement.
