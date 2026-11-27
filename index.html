@@ -99,6 +99,10 @@
   .stat-value.tomato{color:var(--tomato-dark);}
   .stat-sub{font-size:10.5px; color:#6B7C6F; margin-top:3px; line-height:1.35;}
 
+  /* Liste des bons : bon sans prix (achat ou vente) en rouge */
+  tr.noprice td{background:#FDECEC !important; color:#7F1D1D;}
+  tr.noprice td:first-child{box-shadow:inset 4px 0 0 #B91C1C;}
+
   /* Rapport (détail) : dates et montants sur une seule ligne */
   #repDetailTable td{white-space:nowrap;}
   #repDetailTable td.name{white-space:normal;}
@@ -871,7 +875,14 @@
             <button class="btn secondary" id="etatEcheanceShareBtn" style="padding:6px 12px; font-size:12px; background:#2E6DA4; color:#fff;">📤 Partager (PDF)</button>
             </div>
           </div>
-          <div class="stat-grid" id="echStatGrid" style="margin-top:14px;"></div>
+          <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-top:12px;">
+            <div class="field" style="margin:0; min-width:230px;">
+              <label for="echSoldeManuel">Solde actuel en banque (saisi à la main)</label>
+              <input type="text" id="echSoldeManuel" inputmode="decimal" autocomplete="off" placeholder="Vide = solde calculé">
+            </div>
+            <button type="button" class="btn secondary" id="echSoldeManuelClear" style="padding:9px 12px;">Utiliser le solde calculé</button>
+          </div>
+          <div class="stat-grid" id="echStatGrid" style="margin-top:12px;"></div>
           <div id="echAlert" style="margin-top:12px;"></div>
           <div id="echChart" style="margin-top:12px;"></div>
           <div class="filters" style="margin-top:12px;">
@@ -3261,16 +3272,19 @@ const BONS_GRID_COLS = [
   { k:'moyCss',     l:'Moy./caisse',   t:'n', v:b=>b.moyCss||0,      h:b=> (b.moyCss||0) ? fmt(b.moyCss) : '—' },
   { k:'fournisseur',l:'Fournisseur',   t:'s', v:b=>b.fournisseur||'',h:b=>esc(b.fournisseur||'—'), cls:'name' },
   { k:'station',    l:'Station',       t:'s', v:b=>b.station||'',    h:b=>esc(b.station||'—') },
-  { k:'prixAch',    l:'Prix achat',    t:'n', v:b=>b.prixAch||0,     h:b=>fmt(b.prixAch) },
+  { k:'prixAch',    l:'Prix achat',    t:'n', v:b=>b.prixAch||0,     h:b=> (b.prixAch||0) > 0 ? fmt(b.prixAch) : PRIX_MANQUANT },
   { k:'montantDh',  l:'Montant achat', t:'n', v:b=>b.montantDh||0,   h:b=>fmt(b.montantDh), sum:true },
   { k:'client',     l:'Client',        t:'s', v:b=>b.client||'',     h:b=>esc(b.client||'—'), cls:'name' },
-  { k:'prixVente',  l:'Prix vente',    t:'n', v:b=>b.prixVente||0,   h:b=> (b.prixVente||0) ? fmt(b.prixVente) : '—' },
+  { k:'prixVente',  l:'Prix vente',    t:'n', v:b=>b.prixVente||0,   h:b=> (b.prixVente||0) > 0 ? fmt(b.prixVente) : PRIX_MANQUANT },
   { k:'vte',        l:'Montant vente', t:'n', v:b=>b.vte||0,         h:b=> (b.vte||0) ? fmt(b.vte) : '—', sum:true },
   { k:'mrg',        l:'Marge',         t:'n', v:b=>margeBon(b)||0,   h:b=>{ const m = margeBon(b); return m===null ? `<span style="color:#8A9A8D;" title="${bonHorsMarge(b)?'Reliquat / report / solde de début : hors marge':'Pas de prix de vente ou d\'achat : marge non comptée'}">${bonHorsMarge(b)?'hors marge':'—'}</span>` : `<span style="color:${m>=0?'#15803D':'#B91C1C'}; font-weight:700;">${fmt(m)}</span>`; }, sum:true, sumColor:true },
   { k:'type',       l:'Observation',   t:'s', v:b=>b.type||'',       h:b=>esc(b.type||'—') },
   { k:'stA',        l:'Statut achat',  t:'s', stat:'a' },
   { k:'stV',        l:'Statut vente',  t:'s', stat:'v' }
 ];
+// Bon sans prix d'achat ou sans prix de vente (hors reliquats / reports) : ligne en rouge
+function bonSansPrix(b){ return !bonHorsMarge(b) && (!((b.prixAch||0) > 0) || !((b.prixVente||0) > 0)); }
+const PRIX_MANQUANT = '<span style="background:#FBE8E8; color:#B91C1C; font-weight:700; padding:2px 8px; border-radius:6px;" title="Prix manquant">—</span>';
 const BONS_STATUT_LABEL = { solde:'Réglé', partiel:'Partiel', nonsolde:'Non réglé' };
 const BONS_STATUT_COLOR = { solde:'#15803D', partiel:'#A6741A', nonsolde:'#B91C1C' };
 const BONS_STATUT_RANK  = { nonsolde:0, partiel:1, solde:2 };
@@ -3385,7 +3399,7 @@ function renderBonsList(){
       } else html = cc.h(b);
       return `<td class="${cls}">${html}</td>`;
     }).join('');
-    return `<tr data-id="${b.id}" class="${paid?'paid':''} ${bonsGridSelectedId===b.id?'selected':''}">${cells}
+    return `<tr data-id="${b.id}" class="${paid?'paid':''} ${bonSansPrix(b)?'noprice':''} ${bonsGridSelectedId===b.id?'selected':''}"${bonSansPrix(b)?' title="Prix d\'achat ou de vente manquant"':''}>${cells}
       <td class="act"><div class="row-actions">
         <button class="icon-btn" onclick="event.stopPropagation(); editBon('${b.id}')" title="Modifier">✎</button>
         <button class="icon-btn" onclick="event.stopPropagation(); deleteBon('${b.id}')" title="Supprimer">✕</button>
@@ -4295,8 +4309,18 @@ function echeanceOpts(){
     type: document.getElementById('echType').value, periode: document.getElementById('echPeriode').value,
     du: document.getElementById('echDu').value, au: document.getElementById('echAu').value,
     mode: document.getElementById('echMode').value, q: document.getElementById('echSearch').value.trim(),
-    honores: document.getElementById('echHonores').checked, bank: document.getElementById('echBank').checked
+    honores: document.getElementById('echHonores').checked, bank: document.getElementById('echBank').checked,
+    soldeManuel: parseMontantSaisi(document.getElementById('echSoldeManuel').value)
   };
+}
+// « 12 345,67 », « 12345.67 », « -5 000 » → nombre ; vide ou illisible → null
+function parseMontantSaisi(s){
+  s = String(s||'').replace(/[\s\u00A0\u202F]/g,'').replace(/dh$/i,'');
+  if(!s) return null;
+  if(s.includes(',') && s.includes('.')) s = s.replace(/\./g,'').replace(',', '.');
+  else s = s.replace(',', '.');
+  const n = Number(s);
+  return isFinite(n) ? n : null;
 }
 function buildEcheance(opts){
   opts = opts || {};
@@ -4325,7 +4349,7 @@ function buildEcheance(opts){
     });
   }
   // Solde projeté : solde actuel de la banque + encaissements − paiements, cumulé par date d'échéance (échéances non réglées)
-  const bank = computeBankSoldeActuel();
+  const bank = (opts.soldeManuel !== null && opts.soldeManuel !== undefined) ? opts.soldeManuel : computeBankSoldeActuel();
   const openAll = items.filter(i=>!i.honore).sort((a,b)=> a.ech.localeCompare(b.ech) || a.tiers.localeCompare(b.tiers));
   let run = bank, minRun = bank, minDate = '';
   openAll.forEach(i=>{ run += i.sens*i.montant; i.run = run; if(run < minRun){ minRun = run; minDate = i.ech; } });
@@ -4406,7 +4430,7 @@ function echeanceBodyHtml(E, withActions){
 function echeanceChartSvg(E){
   const pts = [{ lbl:"Auj.", run:E.bank }].concat(E.series.map(x=>({ lbl:fmtDate(x.ech).slice(0,5), run:x.run })));
   if(pts.length < 2) return '';
-  const W = 720, H = 150, padL = 8, padR = 8, padT = 14, padB = 22;
+  const W = 720, H = 120, padL = 8, padR = 8, padT = 12, padB = 20;
   const vals = pts.map(p=>p.run), vmin = Math.min(0, ...vals), vmax = Math.max(0, ...vals), span = (vmax - vmin) || 1;
   const x = i => padL + (W-padL-padR) * (i/(pts.length-1));
   const y = v => padT + (H-padT-padB) * (1 - (v - vmin)/span);
@@ -4414,9 +4438,9 @@ function echeanceChartSvg(E){
   const dots = pts.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(p.run).toFixed(1)}" r="3.2" fill="${p.run<0?'#B91C1C':'#2E6DA4'}"/>`).join('');
   const step = Math.max(1, Math.ceil(pts.length/8));
   const labs = pts.map((p,i)=> (i%step===0 || i===pts.length-1) ? `<text x="${x(i).toFixed(1)}" y="${H-6}" font-size="10" text-anchor="middle" fill="#6B7C6F">${esc(p.lbl)}</text>` : '').join('');
-  return `<div style="border:1.5px solid #C7E0F5; border-radius:10px; padding:8px 10px;">
-    <div style="font-size:12px; font-weight:700; color:#4B5B50; margin-bottom:2px;">Évolution du solde projeté de la banque</div>
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;" role="img" aria-label="Évolution du solde projeté">
+  return `<div style="border:1.5px solid #C7E0F5; border-radius:10px; padding:6px 10px; max-width:620px;">
+    <div style="font-size:11.5px; font-weight:700; color:#4B5B50; margin-bottom:2px;">Évolution du solde projeté de la banque</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%; max-height:110px; height:auto; display:block;" role="img" aria-label="Évolution du solde projeté">
       <line x1="${padL}" x2="${W-padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="#E8A9A9" stroke-width="1" stroke-dasharray="4 3"/>
       <path d="${line}" fill="none" stroke="#2E6DA4" stroke-width="2"/>${dots}${labs}
     </svg></div>`;
@@ -4430,7 +4454,7 @@ function renderRapEtatEcheance(){
   const wkIn = E.week.filter(i=>i.sens>0).reduce((s,i)=>s+i.montant,0), wkOut = E.week.filter(i=>i.sens<0).reduce((s,i)=>s+i.montant,0);
   const minTxt = E.minRun < 0 ? fmt(E.minRun) : null;
   document.getElementById('echStatGrid').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Solde actuel banque</div><div class="stat-value" style="font-weight:700; color:${effetsSoldeColor(E.bank)};">${fmt(E.bank)} DH</div></div>
+    <div class="stat-card"><div class="stat-label">Solde actuel banque${echeanceOpts().soldeManuel!==null ? ' (saisi)' : ' (calculé)'}</div><div class="stat-value" style="font-weight:700; color:${effetsSoldeColor(E.bank)};">${fmt(E.bank)} DH</div></div>
     <div class="stat-card"><div class="stat-label">À encaisser</div><div class="stat-value" style="font-weight:700; color:#15803D;">+ ${fmt(E.totalIn)} DH</div></div>
     <div class="stat-card"><div class="stat-label">À payer</div><div class="stat-value" style="font-weight:700; color:#B91C1C;">− ${fmt(E.totalOut)} DH</div></div>
     <div class="stat-card"><div class="stat-label">Solde projeté (tout réglé)</div><div class="stat-value" style="font-weight:700; color:${effetsSoldeColor(E.projected)};">${fmt(E.projected)} DH</div></div>
@@ -4446,6 +4470,20 @@ function renderRapEtatEcheance(){
   tbody.innerHTML = echeanceBodyHtml(E, true);
 }
 ['echType','echPeriode','echDu','echAu','echMode','echHonores','echBank'].forEach(id=>document.getElementById(id).addEventListener('change', renderRapEtatEcheance));
+// Solde bancaire saisi à la main : gardé sur cet appareil, sert de point de départ au solde projeté
+(function(){
+  const inp = document.getElementById('echSoldeManuel');
+  try{ inp.value = localStorage.getItem('hdges_ech_solde') || ''; }catch(e){}
+  inp.addEventListener('input', ()=>{
+    try{ localStorage.setItem('hdges_ech_solde', inp.value); }catch(e){}
+    renderRapEtatEcheance();
+  });
+  document.getElementById('echSoldeManuelClear').addEventListener('click', ()=>{
+    inp.value = '';
+    try{ localStorage.removeItem('hdges_ech_solde'); }catch(e){}
+    renderRapEtatEcheance();
+  });
+})();
 document.getElementById('echSearch').addEventListener('input', renderRapEtatEcheance);
 
 window.deleteReglementFromEcheance = async function(id, type){
@@ -6326,7 +6364,7 @@ function buildEtatEcheanceHTML(){
       <h1>HDGes — État Échéance</h1>
       <div class="print-subtitle">${esc(sub)}</div>
       <div class="print-date">Généré le ${esc(new Date().toLocaleString('fr-FR'))} — ${E.list.length} échéance(s)</div>
-      <div class="print-subtitle" style="margin-top:4px;">Solde actuel banque ${esc(fmt(E.bank))} DH — À encaisser ${esc(fmt(E.totalIn))} — À payer ${esc(fmt(E.totalOut))} — Solde projeté ${esc(fmt(E.projected))} DH${E.minRun<0?' — ⚠ solde négatif jusqu\'à '+esc(fmt(E.minRun))+' DH ('+esc(fmtDate(E.minDate))+')':''}</div>
+      <div class="print-subtitle" style="margin-top:4px;">Solde actuel banque${o.soldeManuel!==null ? " (saisi)" : ""} ${esc(fmt(E.bank))} DH — À encaisser ${esc(fmt(E.totalIn))} — À payer ${esc(fmt(E.totalOut))} — Solde projeté ${esc(fmt(E.projected))} DH${E.minRun<0?' — ⚠ solde négatif jusqu\'à '+esc(fmt(E.minRun))+' DH ('+esc(fmtDate(E.minDate))+')':''}</div>
     </div>
     <table class="print-details doc-table">
       <thead><tr><th>Réf règl.</th><th>Date</th><th>N° pièce</th><th>Date échéance</th><th>Client / Fournisseur</th><th>À payer</th><th>À encaisser</th><th>Solde projeté</th><th>Date d'encaissement</th><th>Statut</th><th>Bons lettrés</th></tr></thead>
@@ -6476,6 +6514,10 @@ document.getElementById('rep_fournisseur').addEventListener('change', function()
 });
 document.getElementById('rep_client').addEventListener('change', function(){
   if(this.value){ document.getElementById('rep_valueType').value = document.getElementById('rep_fournisseur').value ? 'tout' : 'vente'; }
+});
+// Station = côté vente (les stations regroupent des clients), comme pour un client
+document.getElementById('rep_station').addEventListener('change', function(){
+  if(this.value && !document.getElementById('rep_fournisseur').value){ document.getElementById('rep_valueType').value = 'vente'; }
 });
 
 function buildReportTitle(f){
@@ -9359,9 +9401,32 @@ async function silentRefresh(){
   refreshAfterMerge();
 }
 
-// Rafraîchit l'écran affiché avec les données en mémoire (après rechargement ou fusion)
+// Rafraîchit l'écran affiché avec les données en mémoire (après rechargement ou fusion).
+// Ce que l'utilisateur est en train de taper (ex. nom d'un client à ajouter à une station) est
+// conservé : avant, le rechargement automatique (toutes les 15 s) effaçait la saisie.
 function refreshAfterMerge(){
   if(!currentUser) return;
+  const typed = [];
+  document.querySelectorAll('.main input[id], .main textarea[id], .main select[id]').forEach(el=>{
+    if(el.type==='checkbox' || el.type==='radio' || el.type==='file') return;
+    if(el.value) typed.push([el.id, el.value]);
+  });
+  const act = document.activeElement, actId = act && act.id, selS = act && act.selectionStart, selE = act && act.selectionEnd;
+  try{ refreshAfterMergeCore(); }
+  finally{
+    typed.forEach(([id, v])=>{
+      const el = document.getElementById(id);
+      if(!el || el.value) return;
+      if(el.tagName==='SELECT' && ![...el.options].some(o=>o.value===v)) return;
+      el.value = v;
+    });
+    if(actId){
+      const el = document.getElementById(actId);
+      if(el && el !== document.activeElement){ el.focus(); try{ if(selS!=null) el.setSelectionRange(selS, selE); }catch(e){} }
+    }
+  }
+}
+function refreshAfterMergeCore(){
   const activeTab = document.querySelector('.nav-item.active')?.dataset.tab;
   renderDashboard();
   renderBankAlertBox();
